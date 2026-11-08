@@ -376,15 +376,21 @@ internal sealed class BusinessManagementForm : Form
     private TabPage BuildReturnsTab()
     {
         var page = NewTab("↩️ المرتجعات");
-        var root = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3, Padding = new Padding(8) };
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 62)); root.RowStyles.Add(new RowStyle(SizeType.Percent, 100)); root.RowStyles.Add(new RowStyle(SizeType.Absolute, 76));
+        var sections = new TabControl { Dock = DockStyle.Fill, RightToLeft = RightToLeft.Yes, RightToLeftLayout = true, Font = new Font("Segoe UI", 10F, FontStyle.Bold) };
+
+        // مرتجعات المبيعات — نفس الشاشة الحالية دون تغيير منطقها.
+        var salesPage = new TabPage("مرتجعات المبيعات") { BackColor = UiKit.Background, Padding = new Padding(8) };
+        var salesRoot = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3, Padding = new Padding(8) };
+        salesRoot.RowStyles.Add(new RowStyle(SizeType.Absolute, 62));
+        salesRoot.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        salesRoot.RowStyles.Add(new RowStyle(SizeType.Absolute, 76));
         var bar = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, WrapContents = false };
         returnSearch.Width = 270; returnSearch.PlaceholderText = "بحث باسم الصنف";
         var find = UiKit.Button("🔎 تحديث النتائج", UiKit.Primary, 140, 40); find.Click += (_, _) => LoadReturnRows();
         var diagnose = UiKit.Button("🩺 تشخيص المرتجعات", Color.FromArgb(75, 85, 99), 155, 40); diagnose.Click += (_, _) => RunReturnDiagnostics();
         bar.Controls.Add(returnSearch); bar.Controls.Add(find); bar.Controls.Add(diagnose);
-        bar.Controls.Add(MakeHint("تظهر المبيعات النقدية والآجلة؛ قيمة المرتجع تخصم من دين العميل أولًا، ويُرد الفائض نقدًا. يلزم شفت مفتوح عند وجود رد نقدي."));
-        root.Controls.Add(bar, 0, 0);
+        bar.Controls.Add(MakeHint("مرتجعات البيع النقدي والآجل؛ تخصم قيمة المرتجع من دين العميل أولًا، ويُرد الفائض نقدًا."));
+        salesRoot.Controls.Add(bar, 0, 0);
         StyleBusinessGrid(returnGrid);
         returnGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Id", Visible = false });
         returnGrid.Columns.Add(UiKit.GridText("Date", "تاريخ البيع", 150));
@@ -395,13 +401,70 @@ internal sealed class BusinessManagementForm : Form
         returnGrid.Columns.Add(UiKit.GridText("Amount", "قيمة الفاتورة", 135));
         returnGrid.Columns.Add(UiKit.GridText("Tx", "رقم العملية", 100));
         returnGrid.SelectionChanged += (_, _) => UpdateReturnQuantityLimit();
-        root.Controls.Add(returnGrid, 0, 1);
+        salesRoot.Controls.Add(returnGrid, 0, 1);
         var footer = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, WrapContents = false, Padding = new Padding(3) };
         returnQty.Minimum = 1; returnQty.Maximum = 100000; returnQty.Value = 1; returnQty.DecimalPlaces = 0; returnQty.Width = 90;
         returnReason.Width = 260; returnReason.PlaceholderText = "سبب المرتجع (إجباري)";
         var save = UiKit.Button("تأكيد المرتجع ورد المبلغ", UiKit.Danger, 210, 42); save.Click += (_, _) => ProcessReturn();
-        footer.Controls.Add(LabeledControl("الكمية المرتجعة", returnQty, 115)); footer.Controls.Add(LabeledControl("السبب", returnReason, 270)); footer.Controls.Add(save);
-        root.Controls.Add(footer, 0, 2); page.Controls.Add(root); return page;
+        footer.Controls.Add(LabeledControl("الكمية المرتجعة", returnQty, 115));
+        footer.Controls.Add(LabeledControl("السبب", returnReason, 270));
+        footer.Controls.Add(save);
+        salesRoot.Controls.Add(footer, 0, 2);
+        salesPage.Controls.Add(salesRoot);
+
+        // مرتجعات المشتريات — منفصلة تمامًا عن مرتجعات البيع.
+        var purchasesPage = new TabPage("مرتجعات المشتريات") { BackColor = UiKit.Background, Padding = new Padding(10) };
+        var purchaseRoot = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3, Padding = new Padding(8) };
+        purchaseRoot.RowStyles.Add(new RowStyle(SizeType.Absolute, 66));
+        purchaseRoot.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        purchaseRoot.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
+        var purchaseBar = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, WrapContents = false };
+        var newPurchaseReturn = UiKit.Button("＋ إنشاء مرتجع مشتريات", UiKit.Danger, 205, 42);
+        newPurchaseReturn.Click += (_, _) => { ShowPurchaseReturnDialog(); LoadPurchaseReturnArchiveGrid(); };
+        var refreshPurchaseReturns = UiKit.Button("⟳ تحديث الأرشيف", UiKit.Primary, 150, 42);
+        var archiveHint = MakeHint("اختر فاتورة مورد واحدة أو كل فواتير المورد، ثم حدد الأصناف والكميات. تُخصم قيمة المرتجع من حساب المورد أولًا.");
+        refreshPurchaseReturns.Click += (_, _) => LoadPurchaseReturnArchiveGrid();
+        purchaseBar.Controls.Add(newPurchaseReturn);
+        purchaseBar.Controls.Add(refreshPurchaseReturns);
+        purchaseBar.Controls.Add(archiveHint);
+        purchaseRoot.Controls.Add(purchaseBar, 0, 0);
+
+        var purchaseReturnGrid = new DataGridView { Name = "purchaseReturnArchiveGrid", Dock = DockStyle.Fill, AllowUserToAddRows = false, ReadOnly = true, MultiSelect = false, SelectionMode = DataGridViewSelectionMode.FullRowSelect, AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill };
+        StyleBusinessGrid(purchaseReturnGrid);
+        purchaseReturnGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Id", Visible = false });
+        purchaseReturnGrid.Columns.Add(UiKit.GridText("Return", "رقم المرتجع", 90));
+        purchaseReturnGrid.Columns.Add(UiKit.GridText("Date", "التاريخ", 140));
+        purchaseReturnGrid.Columns.Add(UiKit.GridText("Supplier", "المورد", 150));
+        purchaseReturnGrid.Columns.Add(UiKit.GridText("Products", "الأصناف والكميات", 300));
+        purchaseReturnGrid.Columns.Add(UiKit.GridText("Total", "قيمة المرتجع", 110));
+        purchaseReturnGrid.Columns.Add(UiKit.GridText("Cash", "المسترد نقدًا", 110));
+        purchaseReturnGrid.Columns.Add(UiKit.GridText("Reason", "ملاحظات", 150));
+        purchaseReturnGrid.CellDoubleClick += (_, e) =>
+        {
+            if (e.RowIndex < 0) return;
+            long id = Convert.ToInt64(purchaseReturnGrid.Rows[e.RowIndex].Cells["Id"].Value, CultureInfo.InvariantCulture);
+            var row = BusinessManagementStore.LoadPurchaseReturnArchive().FirstOrDefault(x => x.Id == id);
+            if (row == null) return;
+            ShowArchiveText($"تفاصيل مرتجع مشتريات رقم {row.Id}",
+                $"رقم المرتجع: {row.Id}\nالمورد: {row.SupplierName}\nالتاريخ: {row.CreatedAt:yyyy-MM-dd HH:mm}\nالأصناف والكميات: {row.Products}\nإجمالي المرتجع: {row.Total:N2} ج.م\nالمسترد نقدًا: {row.CashRefund:N2} ج.م\nالمخصوم من حساب المورد: {row.Total-row.CashRefund:N2} ج.م\nالسبب: {row.Reason}");
+        };
+        purchaseRoot.Controls.Add(purchaseReturnGrid, 0, 1);
+        purchaseRoot.Controls.Add(MakeHint("دبل كليك على أي مرتجع لعرض تفاصيله."), 0, 2);
+        purchasesPage.Controls.Add(purchaseRoot);
+
+        void LoadPurchaseReturnArchiveGrid()
+        {
+            purchaseReturnGrid.Rows.Clear();
+            foreach (var r in BusinessManagementStore.LoadPurchaseReturnArchive())
+                purchaseReturnGrid.Rows.Add(r.Id, r.Id, r.CreatedAt.ToString("yyyy-MM-dd HH:mm"), r.SupplierName, r.Products, r.Total.ToString("N2"), r.CashRefund.ToString("N2"), r.Reason);
+        }
+
+        sections.TabPages.Add(salesPage);
+        sections.TabPages.Add(purchasesPage);
+        sections.SelectedIndexChanged += (_, _) => { if (sections.SelectedTab == purchasesPage) LoadPurchaseReturnArchiveGrid(); };
+        page.Controls.Add(sections);
+        page.Load += (_, _) => LoadReturnRows();
+        return page;
     }
 
     private TabPage BuildProfitTab()
