@@ -6144,7 +6144,7 @@ namespace LibraryPrintApp
 
             if (!string.IsNullOrWhiteSpace(pricingCategory))
             {
-                PricingSettings saved = PricingStore.Load();
+                PricingSettings saved = pricingSettings;
                 return pricingCategory switch
                 {
                     "الطلبة" => isDuplex
@@ -6201,7 +6201,6 @@ namespace LibraryPrintApp
             }
 
             RecalculateTotals();
-            UpdateRightPreview();
         }
 
         // ============================================================
