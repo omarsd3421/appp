@@ -614,7 +614,9 @@ FROM Purchases WHERE SupplierId=$s ORDER BY CreatedAt DESC,Id DESC LIMIT 300";
         payments.Columns.Add(UiKit.GridText("Note", "البيان", 220));
         payments.Columns.Add(UiKit.GridText("User", "المستخدم", 120));
         foreach (var p in BusinessManagementStore.LoadSupplierPaymentHistory(supplierId))
-            payments.Rows.Add(p.Id, p.PurchaseId, p.CreatedAt.ToString("yyyy-MM-dd HH:mm"), p.InvoiceNumber, p.Amount.ToString("N2"), p.Note, p.UserName);
+            payments.Rows.Add(p.Id, p.PurchaseId, p.CreatedAt.ToString("yyyy-MM-dd HH:mm"),
+                string.IsNullOrWhiteSpace(p.InvoiceNumber) ? "#" + p.PurchaseId.ToString(CultureInfo.InvariantCulture) : p.InvoiceNumber,
+                p.Amount.ToString("N2"), p.Note, p.UserName);
         payments.CellDoubleClick += (_, e) =>
         {
             if (e.RowIndex < 0) return;
