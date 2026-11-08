@@ -242,7 +242,8 @@ internal sealed class BusinessManagementForm : Form
         root.Controls.Add(hint, 0, 1);
         var grid = new DataGridView { Dock = DockStyle.Fill, AllowUserToAddRows = false, AllowUserToDeleteRows = false, MultiSelect = false, SelectionMode = DataGridViewSelectionMode.CellSelect, AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill };
         StyleBusinessGrid(grid);
-        grid.Columns.Add(new DataGridViewTextBoxColumn { Name="PurchaseItemId", Visible=false });
+        grid.ReadOnly = false;
+        grid.Columns.Add(new DataGridViewTextBoxColumn { Name="PurchaseItemId", Visible=false, ReadOnly=true });
         grid.Columns.Add(new DataGridViewTextBoxColumn { Name="PurchaseId", Visible=false });
         grid.Columns.Add(UiKit.GridText("Invoice","فاتورة الشراء",120));
         grid.Columns.Add(UiKit.GridText("Date","تاريخ الشراء",130));
