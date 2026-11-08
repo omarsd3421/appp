@@ -56,6 +56,78 @@ internal sealed class SupplierLookupRow
     public override string ToString() => string.IsNullOrWhiteSpace(Phone) ? Name : $"{Name} — {Phone}";
 }
 
+
+internal sealed class SupplierDetailsRow
+{
+    public long Id { get; init; }
+    public string Name { get; init; } = "";
+    public string Phone { get; init; } = "";
+    public string Address { get; init; } = "";
+    public string Notes { get; init; } = "";
+    public decimal Balance { get; init; }
+}
+
+internal sealed class SupplierPaymentHistoryRow
+{
+    public long Id { get; init; }
+    public long PurchaseId { get; init; }
+    public DateTime CreatedAt { get; init; }
+    public string InvoiceNumber { get; init; } = "";
+    public decimal Amount { get; init; }
+    public string Note { get; init; } = "";
+    public string UserName { get; init; } = "";
+}
+
+internal sealed class PurchaseArchiveRow
+{
+    public long Id { get; init; }
+    public string InvoiceNumber { get; init; } = "";
+    public string SupplierName { get; init; } = "";
+    public decimal Total { get; init; }
+    public decimal Paid { get; init; }
+    public decimal Remaining { get; init; }
+    public DateTime CreatedAt { get; init; }
+}
+
+internal sealed class PurchaseInvoiceHeaderRow : PurchaseArchiveRow
+{
+    public string Notes { get; init; } = "";
+    public string UserName { get; init; } = "";
+}
+
+internal sealed class PurchaseInvoiceItemRow
+{
+    public string ProductName { get; init; } = "";
+    public int Quantity { get; init; }
+    public decimal UnitCost { get; init; }
+    public decimal Total { get; init; }
+}
+
+internal sealed class SalesReturnArchiveRow
+{
+    public long Id { get; init; }
+    public string OriginalTransactions { get; init; } = "";
+    public string Products { get; init; } = "";
+    public decimal RefundAmount { get; init; }
+    public string Reason { get; init; } = "";
+    public string UserName { get; init; } = "";
+    public DateTime CreatedAt { get; init; }
+}
+
+internal sealed class SalesReturnHeaderRow : SalesReturnArchiveRow
+{
+    public string CustomerName { get; init; } = "";
+}
+
+internal sealed class SalesReturnItemRow
+{
+    public long OriginalTransactionId { get; init; }
+    public string ProductName { get; init; } = "";
+    public int Quantity { get; init; }
+    public decimal RefundAmount { get; init; }
+    public decimal? ReturnedCost { get; init; }
+}
+
 internal sealed class ReturnableSaleRow
 {
     public long TransactionId { get; init; }
@@ -449,6 +521,238 @@ WHERE s.IsActive=1 GROUP BY s.Id,s.Name,s.Phone ORDER BY s.Name COLLATE NOCASE";
         AppDatabase.AddAuditLog(c, tx, userName, "إضافة", "مورد", id, $"المورد: {name.Trim()} | الهاتف: {phone}");
         tx.Commit();
         return id;
+    }
+
+
+    public static SupplierDetailsRow? LoadSupplierDetails(long supplierId)
+    {
+        using var c = AppDatabase.OpenConnection();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = @"SELECT s.Id,s.Name,COALESCE(s.Phone,''),COALESCE(s.Address,''),COALESCE(s.Notes,''),
+COALESCE(SUM(p.RemainingAmount),0)
+FROM Suppliers s LEFT JOIN Purchases p ON p.SupplierId=s.Id
+WHERE s.Id=$id GROUP BY s.Id,s.Name,s.Phone,s.Address,s.Notes LIMIT 1";
+        cmd.Parameters.AddWithValue("$id", supplierId);
+        using var r = cmd.ExecuteReader();
+        if (!r.Read()) return null;
+        return new SupplierDetailsRow
+        {
+            Id = r.GetInt64(0), Name = r.GetString(1), Phone = r.GetString(2),
+            Address = r.GetString(3), Notes = r.GetString(4), Balance = Dec(r.GetValue(5))
+        };
+    }
+
+    public static void UpdateSupplier(string userName, long supplierId, string name, string? phone, string? address)
+    {
+        if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("اسم المورد مطلوب.");
+        using var c = AppDatabase.OpenConnection();
+        using var tx = c.BeginTransaction();
+        using var cmd = c.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = @"UPDATE Suppliers SET Name=$name,Phone=$phone,Address=$address WHERE Id=$id AND IsActive=1";
+        cmd.Parameters.AddWithValue("$name", name.Trim());
+        cmd.Parameters.AddWithValue("$phone", DbText(phone));
+        cmd.Parameters.AddWithValue("$address", DbText(address));
+        cmd.Parameters.AddWithValue("$id", supplierId);
+        if (cmd.ExecuteNonQuery() != 1) throw new InvalidOperationException("المورد غير موجود أو تم إيقافه.");
+        AppDatabase.AddAuditLog(c, tx, userName, "تعديل", "مورد", supplierId,
+            $"الاسم: {name.Trim()} | الهاتف: {phone} | العنوان: {address}");
+        tx.Commit();
+    }
+
+    public static List<SupplierPaymentHistoryRow> LoadSupplierPaymentHistory(long supplierId)
+    {
+        var result = new List<SupplierPaymentHistoryRow>();
+        using var c = AppDatabase.OpenConnection();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = @"SELECT sp.Id,sp.PurchaseId,sp.CreatedAt,COALESCE(p.InvoiceNumber,''),sp.Amount,
+COALESCE(sp.Note,''),COALESCE(u.UserName,'')
+FROM SupplierPayments sp
+JOIN Purchases p ON p.Id=sp.PurchaseId
+LEFT JOIN AppUsers u ON u.Id=sp.UserId
+WHERE sp.SupplierId=$id
+ORDER BY sp.CreatedAt DESC,sp.Id DESC LIMIT 1000";
+        cmd.Parameters.AddWithValue("$id", supplierId);
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            DateTime date = DateTime.TryParse(r.GetString(2), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var parsed) ? parsed : DateTime.MinValue;
+            result.Add(new SupplierPaymentHistoryRow
+            {
+                Id = r.GetInt64(0), PurchaseId = r.GetInt64(1), CreatedAt = date,
+                InvoiceNumber = r.GetString(3), Amount = Dec(r.GetValue(4)),
+                Note = r.GetString(5), UserName = r.GetString(6)
+            });
+        }
+        return result;
+    }
+
+    public static List<PurchaseArchiveRow> LoadPurchaseArchiveRows(string? search, long? supplierId = null)
+    {
+        var result = new List<PurchaseArchiveRow>();
+        string q = (search ?? "").Trim();
+        using var c = AppDatabase.OpenConnection();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = @"SELECT p.Id,COALESCE(p.InvoiceNumber,''),s.Name,p.TotalAmount,p.PaidAmount,p.RemainingAmount,p.CreatedAt
+FROM Purchases p JOIN Suppliers s ON s.Id=p.SupplierId
+WHERE ($supplier IS NULL OR p.SupplierId=$supplier)
+AND ($q='' OR COALESCE(p.InvoiceNumber,'') LIKE $pattern OR s.Name LIKE $pattern OR CAST(p.Id AS TEXT) LIKE $pattern)
+ORDER BY p.CreatedAt DESC,p.Id DESC LIMIT 1000";
+        cmd.Parameters.AddWithValue("$supplier", (object?)supplierId ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("$q", q);
+        cmd.Parameters.AddWithValue("$pattern", "%" + q + "%");
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            DateTime date = DateTime.TryParse(r.GetString(6), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var parsed) ? parsed : DateTime.MinValue;
+            result.Add(new PurchaseArchiveRow
+            {
+                Id = r.GetInt64(0), InvoiceNumber = r.GetString(1), SupplierName = r.GetString(2),
+                Total = Dec(r.GetValue(3)), Paid = Dec(r.GetValue(4)), Remaining = Dec(r.GetValue(5)), CreatedAt = date
+            });
+        }
+        return result;
+    }
+
+    public static PurchaseInvoiceHeaderRow? LoadPurchaseInvoiceHeader(long purchaseId)
+    {
+        using var c = AppDatabase.OpenConnection();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = @"SELECT p.Id,COALESCE(p.InvoiceNumber,''),s.Name,p.TotalAmount,p.PaidAmount,p.RemainingAmount,
+p.CreatedAt,COALESCE(p.Notes,''),COALESCE(u.UserName,'')
+FROM Purchases p JOIN Suppliers s ON s.Id=p.SupplierId
+LEFT JOIN AppUsers u ON u.Id=p.UserId
+WHERE p.Id=$id LIMIT 1";
+        cmd.Parameters.AddWithValue("$id", purchaseId);
+        using var r = cmd.ExecuteReader();
+        if (!r.Read()) return null;
+        DateTime date = DateTime.TryParse(r.GetString(6), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var parsed) ? parsed : DateTime.MinValue;
+        return new PurchaseInvoiceHeaderRow
+        {
+            Id = r.GetInt64(0), InvoiceNumber = r.GetString(1), SupplierName = r.GetString(2),
+            Total = Dec(r.GetValue(3)), Paid = Dec(r.GetValue(4)), Remaining = Dec(r.GetValue(5)),
+            CreatedAt = date, Notes = r.GetString(7), UserName = r.GetString(8)
+        };
+    }
+
+    public static List<PurchaseInvoiceItemRow> LoadPurchaseInvoiceItems(long purchaseId)
+    {
+        var result = new List<PurchaseInvoiceItemRow>();
+        using var c = AppDatabase.OpenConnection();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = @"SELECT ProductNameSnapshot,Quantity,UnitCost,LineTotal
+FROM PurchaseItems WHERE PurchaseId=$id ORDER BY Id";
+        cmd.Parameters.AddWithValue("$id", purchaseId);
+        using var r = cmd.ExecuteReader();
+        while (r.Read()) result.Add(new PurchaseInvoiceItemRow
+        {
+            ProductName = r.GetString(0), Quantity = Convert.ToInt32(r.GetValue(1), CultureInfo.InvariantCulture),
+            UnitCost = Dec(r.GetValue(2)), Total = Dec(r.GetValue(3))
+        });
+        return result;
+    }
+
+    public static List<SupplierPaymentHistoryRow> LoadPurchaseInvoicePayments(long purchaseId)
+    {
+        var result = new List<SupplierPaymentHistoryRow>();
+        using var c = AppDatabase.OpenConnection();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = @"SELECT sp.Id,sp.PurchaseId,sp.CreatedAt,COALESCE(p.InvoiceNumber,''),sp.Amount,
+COALESCE(sp.Note,''),COALESCE(u.UserName,'')
+FROM SupplierPayments sp JOIN Purchases p ON p.Id=sp.PurchaseId
+LEFT JOIN AppUsers u ON u.Id=sp.UserId
+WHERE sp.PurchaseId=$id ORDER BY sp.CreatedAt,sp.Id";
+        cmd.Parameters.AddWithValue("$id", purchaseId);
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            DateTime date = DateTime.TryParse(r.GetString(2), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var parsed) ? parsed : DateTime.MinValue;
+            result.Add(new SupplierPaymentHistoryRow
+            {
+                Id = r.GetInt64(0), PurchaseId = r.GetInt64(1), CreatedAt = date,
+                InvoiceNumber = r.GetString(3), Amount = Dec(r.GetValue(4)),
+                Note = r.GetString(5), UserName = r.GetString(6)
+            });
+        }
+        return result;
+    }
+
+    public static List<SalesReturnArchiveRow> LoadSalesReturnArchiveRows(string? search)
+    {
+        var result = new List<SalesReturnArchiveRow>();
+        string q = (search ?? "").Trim();
+        using var c = AppDatabase.OpenConnection();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = @"SELECT sr.Id,sr.CreatedAt,
+COALESCE(GROUP_CONCAT(DISTINCT ri.OriginalTransactionId),''),
+COALESCE(GROUP_CONCAT(ri.ProductNameSnapshot || ' × ' || ri.Quantity,'،'),''),
+sr.RefundAmount,sr.Reason,COALESCE(u.UserName,'')
+FROM SalesReturns sr
+LEFT JOIN SalesReturnItems ri ON ri.ReturnId=sr.Id
+LEFT JOIN AppUsers u ON u.Id=sr.UserId
+WHERE ($q='' OR CAST(sr.Id AS TEXT) LIKE $pattern OR sr.Reason LIKE $pattern
+OR EXISTS(SELECT 1 FROM SalesReturnItems x WHERE x.ReturnId=sr.Id AND
+(x.ProductNameSnapshot LIKE $pattern OR CAST(x.OriginalTransactionId AS TEXT) LIKE $pattern)))
+GROUP BY sr.Id,sr.CreatedAt,sr.RefundAmount,sr.Reason,u.UserName
+ORDER BY sr.CreatedAt DESC,sr.Id DESC LIMIT 1000";
+        cmd.Parameters.AddWithValue("$q", q);
+        cmd.Parameters.AddWithValue("$pattern", "%" + q + "%");
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            DateTime date = DateTime.TryParse(r.GetString(1), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var parsed) ? parsed : DateTime.MinValue;
+            result.Add(new SalesReturnArchiveRow
+            {
+                Id = r.GetInt64(0), CreatedAt = date, OriginalTransactions = r.GetString(2),
+                Products = r.GetString(3), RefundAmount = Dec(r.GetValue(4)),
+                Reason = r.GetString(5), UserName = r.GetString(6)
+            });
+        }
+        return result;
+    }
+
+    public static SalesReturnHeaderRow? LoadSalesReturnHeader(long returnId)
+    {
+        using var c = AppDatabase.OpenConnection();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = @"SELECT sr.Id,sr.CreatedAt,
+COALESCE(GROUP_CONCAT(DISTINCT ri.OriginalTransactionId),''),
+COALESCE(GROUP_CONCAT(ri.ProductNameSnapshot || ' × ' || ri.Quantity,'،'),''),
+sr.RefundAmount,sr.Reason,COALESCE(u.UserName,''),COALESCE(c.Name,'')
+FROM SalesReturns sr
+LEFT JOIN SalesReturnItems ri ON ri.ReturnId=sr.Id
+LEFT JOIN AppUsers u ON u.Id=sr.UserId
+LEFT JOIN Customers c ON c.Id=sr.CustomerId
+WHERE sr.Id=$id
+GROUP BY sr.Id,sr.CreatedAt,sr.RefundAmount,sr.Reason,u.UserName,c.Name LIMIT 1";
+        cmd.Parameters.AddWithValue("$id", returnId);
+        using var r = cmd.ExecuteReader();
+        if (!r.Read()) return null;
+        DateTime date = DateTime.TryParse(r.GetString(1), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var parsed) ? parsed : DateTime.MinValue;
+        return new SalesReturnHeaderRow
+        {
+            Id = r.GetInt64(0), CreatedAt = date, OriginalTransactions = r.GetString(2),
+            Products = r.GetString(3), RefundAmount = Dec(r.GetValue(4)),
+            Reason = r.GetString(5), UserName = r.GetString(6), CustomerName = r.GetString(7)
+        };
+    }
+
+    public static List<SalesReturnItemRow> LoadSalesReturnItems(long returnId)
+    {
+        var result = new List<SalesReturnItemRow>();
+        using var c = AppDatabase.OpenConnection();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = @"SELECT OriginalTransactionId,ProductNameSnapshot,Quantity,RefundAmount,CostReturned
+FROM SalesReturnItems WHERE ReturnId=$id ORDER BY Id";
+        cmd.Parameters.AddWithValue("$id", returnId);
+        using var r = cmd.ExecuteReader();
+        while (r.Read()) result.Add(new SalesReturnItemRow
+        {
+            OriginalTransactionId = r.GetInt64(0), ProductName = r.GetString(1),
+            Quantity = Convert.ToInt32(r.GetValue(2), CultureInfo.InvariantCulture),
+            RefundAmount = Dec(r.GetValue(3)), ReturnedCost = r.IsDBNull(4) ? null : Dec(r.GetValue(4))
+        });
+        return result;
     }
 
     public static long CreatePurchase(string userName, long supplierId, string? invoiceNumber, string? notes,
