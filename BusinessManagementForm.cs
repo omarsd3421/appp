@@ -519,7 +519,10 @@ FROM Purchases WHERE SupplierId=$s ORDER BY CreatedAt DESC,Id DESC LIMIT 300";
             while (r.Read())
             {
                 DateTime date = DateTime.TryParse(r.GetString(1), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var d) ? d : DateTime.MinValue;
-                supplierPurchaseGrid.Rows.Add(r.GetInt64(0), date.ToString("yyyy-MM-dd HH:mm"), r.GetString(2),
+                long purchaseId = r.GetInt64(0);
+                string invoiceNumber = r.GetString(2);
+                supplierPurchaseGrid.Rows.Add(purchaseId, date.ToString("yyyy-MM-dd HH:mm"),
+                    string.IsNullOrWhiteSpace(invoiceNumber) ? "#" + purchaseId.ToString(CultureInfo.InvariantCulture) : invoiceNumber,
                     Dec(r.GetValue(3)).ToString("N2"), Dec(r.GetValue(4)).ToString("N2"), Dec(r.GetValue(5)).ToString("N2"));
             }
         }
@@ -633,6 +636,8 @@ FROM Purchases WHERE SupplierId=$s ORDER BY CreatedAt DESC,Id DESC LIMIT 300";
                 MessageBox.Show(dialog, "كلمة مرور الإدارة غير صحيحة. لم يتم فتح التعديل.", "رفض التعديل", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
+            if (!AdminPasswordRotation.EnsureRotatedIfDefault(dialog))
+                return;
             name.ReadOnly = false; phone.ReadOnly = false; address.ReadOnly = false;
             save.Visible = true; edit.Enabled = false; name.Focus();
         };
@@ -710,7 +715,9 @@ FROM Purchases WHERE SupplierId=$s ORDER BY CreatedAt DESC,Id DESC LIMIT 300";
     {
         purchaseArchiveGrid.Rows.Clear();
         foreach (var p in BusinessManagementStore.LoadPurchaseArchiveRows(purchaseArchiveSearch.Text))
-            purchaseArchiveGrid.Rows.Add(p.Id, p.InvoiceNumber, p.SupplierName, p.Total.ToString("N2"), p.Paid.ToString("N2"), p.Remaining.ToString("N2"), p.CreatedAt.ToString("yyyy-MM-dd HH:mm"));
+            purchaseArchiveGrid.Rows.Add(p.Id,
+                string.IsNullOrWhiteSpace(p.InvoiceNumber) ? "#" + p.Id.ToString(CultureInfo.InvariantCulture) : p.InvoiceNumber,
+                p.SupplierName, p.Total.ToString("N2"), p.Paid.ToString("N2"), p.Remaining.ToString("N2"), p.CreatedAt.ToString("yyyy-MM-dd HH:mm"));
     }
 
     private void OpenSelectedPurchaseArchive()
