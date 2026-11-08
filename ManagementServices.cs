@@ -142,6 +142,17 @@ internal sealed class ReturnableSaleRow
 }
 
 
+internal sealed class ProfitPrintingCategoryRow
+{
+    public string Category { get; init; } = "";
+    public string ColorType { get; init; } = "";
+    public string DuplexMode { get; init; } = "";
+    public int Jobs { get; init; }
+    public int Faces { get; init; }
+    public int Sheets { get; init; }
+    public decimal Revenue { get; init; }
+}
+
 internal sealed class ProfitProductRow
 {
     public string ProductName { get; init; } = "";
@@ -179,6 +190,7 @@ internal sealed class ProfitSnapshot
     public int UncostedLegacyCount { get; init; }
     public List<ProfitProductRow> ProductBreakdown { get; init; } = new();
     public List<ProfitEmployeeRow> EmployeeBreakdown { get; init; } = new();
+    public List<ProfitPrintingCategoryRow> PrintingBreakdown { get; init; } = new();
     public decimal KnownNetProfit => SalesGrossProfit - (ReturnedSales - ReturnCost)
         + CashServiceCommissions + OtherServiceCommissions - OperatingExpenses;
 }
@@ -1088,6 +1100,28 @@ AND Category IN ('فاتورة كهرباء','فاتورة مياه','فاتور
             cmd.CommandText = "SELECT COALESCE(SUM(Price),0) FROM PrintLog WHERE substr(Timestamp,1,10)>=$a AND substr(Timestamp,1,10)<$b";
             cmd.Parameters.AddWithValue("$a", start); cmd.Parameters.AddWithValue("$b", end); printRevenue = Dec(cmd.ExecuteScalar() ?? 0m);
         }
+        var printingBreakdown = new List<ProfitPrintingCategoryRow>();
+        using (var cmd = c.CreateCommand())
+        {
+            cmd.CommandText = @"SELECT COALESCE(NULLIF(PricingCategory,''),'غير محدد'),
+COALESCE(ColorType,'غير محدد'),COALESCE(DuplexMode,'غير محدد'),
+COUNT(*),COALESCE(SUM(Pages * Copies),0),COALESCE(SUM(PhysicalSheets),0),COALESCE(SUM(Price),0)
+FROM PrintLog
+WHERE substr(Timestamp,1,10)>=$a AND substr(Timestamp,1,10)<$b
+GROUP BY COALESCE(NULLIF(PricingCategory,''),'غير محدد'),COALESCE(ColorType,'غير محدد'),COALESCE(DuplexMode,'غير محدد')
+ORDER BY SUM(Price) DESC";
+            cmd.Parameters.AddWithValue("$a", start); cmd.Parameters.AddWithValue("$b", end);
+            using var r = cmd.ExecuteReader();
+            while (r.Read()) printingBreakdown.Add(new ProfitPrintingCategoryRow
+            {
+                Category = r.GetString(0), ColorType = r.GetString(1), DuplexMode = r.GetString(2),
+                Jobs = Convert.ToInt32(r.GetValue(3), CultureInfo.InvariantCulture),
+                Faces = Convert.ToInt32(r.GetValue(4), CultureInfo.InvariantCulture),
+                Sheets = Convert.ToInt32(r.GetValue(5), CultureInfo.InvariantCulture),
+                Revenue = Dec(r.GetValue(6))
+            });
+        }
+
         var productBreakdown = new List<ProfitProductRow>();
         using (var cmd = c.CreateCommand())
         {
@@ -1142,7 +1176,8 @@ GROUP BY u.UserName ORDER BY SUM(t.RequiredAmount) DESC";
             CashServiceCommissions = cashCommission, OtherServiceCommissions = serviceCommission,
             OperatingExpenses = expenses, PrintingRevenue = printRevenue,
             UncostedLegacySales = uncosted, UncostedReturns = uncostedReturns, UncostedLegacyCount = uncostedCount,
-            ProductBreakdown = productBreakdown, EmployeeBreakdown = employeeBreakdown
+            ProductBreakdown = productBreakdown, EmployeeBreakdown = employeeBreakdown,
+            PrintingBreakdown = printingBreakdown
         };
     }
 
