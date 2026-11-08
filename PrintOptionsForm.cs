@@ -403,14 +403,28 @@ namespace LibraryPrintApp
                 Orientation = Orientation.Vertical,
                 FixedPanel = FixedPanel.Panel1,
                 IsSplitterFixed = true,
-                SplitterDistance = 178,
-                Panel1MinSize = 166,
-                Panel2MinSize = 620,
+                Panel1MinSize = 150,
+                Panel2MinSize = 420,
                 RightToLeft = RightToLeft.Yes,
                 BackColor = Color.FromArgb(224, 228, 233)
             };
+            // لا تضبط SplitterDistance قبل حساب المساحة الفعلية؛ WinForms يرمي
+            // ArgumentOutOfRangeException إذا لم تتسع النافذة لمجموع الحدين الأدنى.
+            void FitTemplateSplitter()
+            {
+                int available = mainSplit.ClientSize.Width - mainSplit.SplitterWidth;
+                int min = mainSplit.Panel1MinSize;
+                int max = available - mainSplit.Panel2MinSize;
+                if (max < min) return;
+                int target = Math.Clamp(178, min, max);
+                if (mainSplit.SplitterDistance != target)
+                    mainSplit.SplitterDistance = target;
+            }
+            mainSplit.SizeChanged += (_, _) => FitTemplateSplitter();
             mainSplit.Panel1.Controls.Add(templateSidebar);
             mainSplit.Panel2.Controls.Add(layout);
+            mainSplit.HandleCreated += (_, _) => FitTemplateSplitter();
+            Shown += (_, _) => FitTemplateSplitter();
 
             Controls.Add(mainSplit);
             Controls.Add(header);
