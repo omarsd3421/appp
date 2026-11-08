@@ -37,6 +37,8 @@ namespace LibraryPrintApp
         private ComboBox cmbPricingPreset = null!;
         private ComboBox cmbSelectedFileCategory = null!;
         private Label lblSelectedFileCategory = null!;
+        private ComboBox cmbSelectedFilePrintTemplate = null!;
+        private Label lblSelectedFilePrintTemplate = null!;
 
         private Label lblTotalPages = null!;
         private Label lblTotalPapers = null!;
@@ -706,31 +708,54 @@ namespace LibraryPrintApp
             btnEditImage.Click +=
                 BtnEditImage_Click;
 
-            // اختيار قالب الطباعة المحفوظ وتطبيقه على الملفات المحددة فقط.
-            lblSelectedFileCategory = new Label
+            // قالب الطباعة للملفات المحددة: يغير إعدادات الطباعة فقط.
+            lblSelectedFilePrintTemplate = new Label
             {
                 Text = "قالب الطباعة للملفات المحددة:",
-                Location = new Point(1178, 108),
+                Location = new Point(1178, 16),
                 Width = 205,
-                Height = 24,
+                Height = 22,
                 TextAlign = ContentAlignment.MiddleRight,
                 Font = labelFont
             };
-            cmbSelectedFileCategory = new ComboBox
+            cmbSelectedFilePrintTemplate = new ComboBox
             {
-                Location = new Point(1178, 132),
+                Location = new Point(1178, 39),
                 Width = 205,
                 Height = 30,
                 DropDownStyle = ComboBoxStyle.DropDownList,
                 Font = controlFont
             };
-            cmbSelectedFileCategory.Items.Add("— اختر قالب الطباعة —");
+            cmbSelectedFilePrintTemplate.Items.Add("— اختر قالب الطباعة —");
             foreach (string templateName in AppOptions.GetPrintTemplateNames())
-                cmbSelectedFileCategory.Items.Add(templateName);
+                cmbSelectedFilePrintTemplate.Items.Add(templateName);
+            cmbSelectedFilePrintTemplate.SelectedIndex = 0;
+            cmbSelectedFilePrintTemplate.Enabled = cmbSelectedFilePrintTemplate.Items.Count > 1;
+            ComboBoxStyler.ApplyModernStyle(cmbSelectedFilePrintTemplate, Color.FromArgb(52, 73, 94));
+            cmbSelectedFilePrintTemplate.SelectedIndexChanged += (_, _) => ApplySelectedFilePrintTemplate();
+
+            // فئة التسعير للملفات المحددة: مستقلة تمامًا عن قالب الطباعة.
+            lblSelectedFileCategory = new Label
+            {
+                Text = "الفئة للملفات المحددة:",
+                Location = new Point(1178, 76),
+                Width = 205,
+                Height = 22,
+                TextAlign = ContentAlignment.MiddleRight,
+                Font = labelFont
+            };
+            cmbSelectedFileCategory = new ComboBox
+            {
+                Location = new Point(1178, 99),
+                Width = 205,
+                Height = 30,
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                Font = controlFont
+            };
+            cmbSelectedFileCategory.Items.AddRange(new object[] { "حسب فئة الشاشة", "الطلبة", "عادي", "مخصص" });
             cmbSelectedFileCategory.SelectedIndex = 0;
-            cmbSelectedFileCategory.Enabled = cmbSelectedFileCategory.Items.Count > 1;
             ComboBoxStyler.ApplyModernStyle(cmbSelectedFileCategory, Color.FromArgb(52, 73, 94));
-            cmbSelectedFileCategory.SelectedIndexChanged += (_, _) => ApplySelectedFilePrintTemplate();
+            cmbSelectedFileCategory.SelectedIndexChanged += (_, _) => ApplySelectedFilePricingCategory();
 
             // ========================================================
             // تسجيل خروج من المستخدم الحالي
@@ -875,6 +900,8 @@ namespace LibraryPrintApp
                     btnAdminSettings,
                     btnLogout,
                     btnEditImage,
+                    lblSelectedFilePrintTemplate,
+                    cmbSelectedFilePrintTemplate,
                     lblSelectedFileCategory,
                     cmbSelectedFileCategory
                 });
@@ -6170,9 +6197,9 @@ namespace LibraryPrintApp
 
         private void ApplySelectedFilePrintTemplate()
         {
-            if (cmbSelectedFileCategory == null || cmbSelectedFileCategory.SelectedIndex <= 0)
+            if (cmbSelectedFilePrintTemplate == null || cmbSelectedFilePrintTemplate.SelectedIndex <= 0)
                 return;
-            string? templateName = cmbSelectedFileCategory.SelectedItem?.ToString();
+            string? templateName = cmbSelectedFilePrintTemplate.SelectedItem?.ToString();
             if (string.IsNullOrWhiteSpace(templateName) || !AppOptions.TryGetPrintTemplate(templateName, out var templateOptions))
                 return;
 
@@ -6184,7 +6211,7 @@ namespace LibraryPrintApp
             if (rows.Count == 0)
             {
                 MessageBox.Show(this, "حدد ملفًا واحدًا أو أكثر من الجدول أولًا، ثم اختر قالب الطباعة.", "قوالب الطباعة", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                cmbSelectedFileCategory.SelectedIndex = 0;
+                cmbSelectedFilePrintTemplate.SelectedIndex = 0;
                 return;
             }
 
@@ -6201,7 +6228,7 @@ namespace LibraryPrintApp
             RecalculateTotals();
             previewSheetIndex = 0;
             UpdateRightPreview();
-            cmbSelectedFileCategory.SelectedIndex = 0;
+            cmbSelectedFilePrintTemplate.SelectedIndex = 0;
         }
 
         private void ApplySelectedFilePricingCategory()
@@ -6212,9 +6239,12 @@ namespace LibraryPrintApp
             var rows = gridFiles.SelectedRows.Cast<DataGridViewRow>()
                 .Where(r => !r.IsNewRow && r.Tag is FileEntry)
                 .ToList();
+            if (rows.Count == 0 && gridFiles.CurrentRow != null &&
+                !gridFiles.CurrentRow.IsNewRow && gridFiles.CurrentRow.Tag is FileEntry)
+                rows.Add(gridFiles.CurrentRow);
+
             if (rows.Count == 0)
             {
-                // لا نظهر رسالة عند تهيئة الواجهة؛ الرسالة فقط عند اختيار قيمة يدوية.
                 if (cmbSelectedFileCategory.SelectedIndex > 0)
                     MessageBox.Show(this, "حدد ملفًا واحدًا أو أكثر من الجدول أولًا، ثم اختر الفئة.", "فئة الملفات", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
@@ -6228,11 +6258,12 @@ namespace LibraryPrintApp
             {
                 var entry = (FileEntry)row.Tag!;
                 row.Tag = new FileEntry(entry.OriginalPath, entry.PrintPath, entry.Options, category);
-                row.Cells["FileName"].ToolTipText =
-                    entry.OriginalPath + (category == null ? "\nالفئة: حسب فئة الشاشة" : "\nالفئة: " + category);
+                row.Cells["FileName"].ToolTipText = entry.OriginalPath +
+                    (category == null ? "\nالفئة: حسب فئة الشاشة" : "\nالفئة: " + category);
             }
 
             RecalculateTotals();
+            cmbSelectedFileCategory.SelectedIndex = 0;
         }
 
         // ============================================================
