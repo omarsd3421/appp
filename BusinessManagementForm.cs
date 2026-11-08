@@ -419,6 +419,8 @@ internal sealed class BusinessManagementForm : Form
         purchaseRoot.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         purchaseRoot.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
         var purchaseBar = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, WrapContents = false };
+        // Declare before wiring the click handler because the handler refreshes this grid.
+        DataGridView purchaseReturnGrid = null!;
         var newPurchaseReturn = UiKit.Button("＋ إنشاء مرتجع مشتريات", UiKit.Danger, 205, 42);
         newPurchaseReturn.Click += (_, _) => { ShowPurchaseReturnDialog(); LoadPurchaseReturnArchiveGrid(); };
         var refreshPurchaseReturns = UiKit.Button("⟳ تحديث الأرشيف", UiKit.Primary, 150, 42);
@@ -429,7 +431,7 @@ internal sealed class BusinessManagementForm : Form
         purchaseBar.Controls.Add(archiveHint);
         purchaseRoot.Controls.Add(purchaseBar, 0, 0);
 
-        var purchaseReturnGrid = new DataGridView { Name = "purchaseReturnArchiveGrid", Dock = DockStyle.Fill, AllowUserToAddRows = false, ReadOnly = true, MultiSelect = false, SelectionMode = DataGridViewSelectionMode.FullRowSelect, AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill };
+        purchaseReturnGrid = new DataGridView { Name = "purchaseReturnArchiveGrid", Dock = DockStyle.Fill, AllowUserToAddRows = false, ReadOnly = true, MultiSelect = false, SelectionMode = DataGridViewSelectionMode.FullRowSelect, AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill };
         StyleBusinessGrid(purchaseReturnGrid);
         purchaseReturnGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Id", Visible = false });
         purchaseReturnGrid.Columns.Add(UiKit.GridText("Return", "رقم المرتجع", 90));
