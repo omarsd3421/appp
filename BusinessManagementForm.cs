@@ -205,6 +205,7 @@ internal sealed class BusinessManagementForm : Form
         var save = UiKit.Button("💾 حفظ فاتورة الشراء وتحديث المخزن", Color.FromArgb(0, 121, 107), 260, 42); save.Click += (_, _) => SavePurchase(); footer.Controls.Add(save);
         var clear = UiKit.Button("تفريغ", Color.FromArgb(108, 117, 125), 90, 40); clear.Click += (_, _) => ClearPurchase(); footer.Controls.Add(clear);
         var supplierReturn = UiKit.Button("↩ مرتجع للمورد", UiKit.Danger, 165, 42); supplierReturn.Click += (_, _) => ShowPurchaseReturnDialog(); footer.Controls.Add(supplierReturn);
+        var supplierReturnArchive = UiKit.Button("أرشيف مرتجعات الموردين", Color.FromArgb(75,85,99), 190, 42); supplierReturnArchive.Click += (_, _) => ShowPurchaseReturnArchive(); footer.Controls.Add(supplierReturnArchive);
         root.Controls.Add(footer, 0, 3);
         page.Controls.Add(root);
         return page;
@@ -324,6 +325,38 @@ internal sealed class BusinessManagementForm : Form
         };
         LoadInvoiceChoices(); LoadRows();
         dialog.ShowDialog(this);
+    }
+
+
+    private void ShowPurchaseReturnArchive()
+    {
+        using var form=new Form { Text="أرشيف مرتجعات المشتريات للموردين",StartPosition=FormStartPosition.CenterParent,
+            Size=new Size(1100,650),MinimumSize=new Size(900,520),RightToLeft=RightToLeft.Yes,RightToLeftLayout=true,
+            Font=new Font("Segoe UI",10F),BackColor=Color.White };
+        EnableEscapeClose(form);
+        var grid=new DataGridView { Dock=DockStyle.Fill,AllowUserToAddRows=false,ReadOnly=true,SelectionMode=DataGridViewSelectionMode.FullRowSelect,
+            MultiSelect=false,AutoSizeColumnsMode=DataGridViewAutoSizeColumnsMode.Fill };
+        StyleBusinessGrid(grid);
+        grid.Columns.Add(new DataGridViewTextBoxColumn {Name="Id",Visible=false});
+        grid.Columns.Add(UiKit.GridText("Return","رقم المرتجع",90));
+        grid.Columns.Add(UiKit.GridText("Date","التاريخ",140));
+        grid.Columns.Add(UiKit.GridText("Supplier","المورد",170));
+        grid.Columns.Add(UiKit.GridText("Products","الأصناف والكميات",300));
+        grid.Columns.Add(UiKit.GridText("Total","قيمة المرتجع",120));
+        grid.Columns.Add(UiKit.GridText("Cash","المستلم نقدًا",120));
+        grid.Columns.Add(UiKit.GridText("Reason","السبب",180));
+        foreach(var r in BusinessManagementStore.LoadPurchaseReturnArchive())
+            grid.Rows.Add(r.Id,r.Id,r.CreatedAt.ToString("yyyy-MM-dd HH:mm"),r.SupplierName,r.Products,r.Total.ToString("N2"),r.CashRefund.ToString("N2"),r.Reason);
+        grid.CellDoubleClick+=(_,e)=>{
+            if(e.RowIndex<0)return;
+            var row=BusinessManagementStore.LoadPurchaseReturnArchive().FirstOrDefault(x=>x.Id==Convert.ToInt64(grid.Rows[e.RowIndex].Cells["Id"].Value,CultureInfo.InvariantCulture));
+            if(row==null)return;
+            ShowArchiveText($"تفاصيل مرتجع المورد رقم {row.Id}",
+                $"رقم المرتجع: {row.Id}\nالمورد: {row.SupplierName}\nالتاريخ: {row.CreatedAt:yyyy-MM-dd HH:mm}\nالأصناف والكميات: {row.Products}\nإجمالي قيمة المرتجع: {row.Total:N2} ج.م\nالمستلم نقدًا من المورد: {row.CashRefund:N2} ج.م\nالمخصوم من حساب المورد: {row.Total-row.CashRefund:N2} ج.م\nالسبب: {row.Reason}");
+        };
+        var close=UiKit.Button("إغلاق",Color.FromArgb(108,117,125),100,40);
+        close.Dock=DockStyle.Bottom;close.Click+=(_,_)=>form.Close();
+        form.Controls.Add(grid);form.Controls.Add(close);form.ShowDialog(this);
     }
 
     private static void EnableEscapeClose(Form form)
