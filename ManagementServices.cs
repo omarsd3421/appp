@@ -886,6 +886,27 @@ VALUES($s,$no,$t,$paid,$remain,$notes,$u,$d); SELECT last_insert_rowid();";
     }
 
 
+
+    public static List<PurchaseReturnArchiveRow> LoadPurchaseReturnArchive(long? supplierId = null)
+    {
+        var rows=new List<PurchaseReturnArchiveRow>();
+        using var c=AppDatabase.OpenConnection(); using var cmd=c.CreateCommand();
+        cmd.CommandText=@"SELECT pr.Id,pr.CreatedAt,s.Name,pr.TotalAmount,pr.CashRefund,COALESCE(pr.Reason,''),
+COALESCE(GROUP_CONCAT(ri.ProductNameSnapshot || ' × ' || ri.Quantity,'،'),'')
+FROM PurchaseReturns pr JOIN Suppliers s ON s.Id=pr.SupplierId
+LEFT JOIN PurchaseReturnItems ri ON ri.ReturnId=pr.Id
+WHERE ($s IS NULL OR pr.SupplierId=$s)
+GROUP BY pr.Id,pr.CreatedAt,s.Name,pr.TotalAmount,pr.CashRefund,pr.Reason
+ORDER BY pr.CreatedAt DESC,pr.Id DESC LIMIT 1000";
+        cmd.Parameters.AddWithValue("$s",(object?)supplierId ?? DBNull.Value);
+        using var r=cmd.ExecuteReader();
+        while(r.Read()) rows.Add(new PurchaseReturnArchiveRow {
+            Id=r.GetInt64(0),CreatedAt=DateTime.TryParse(r.GetString(1),CultureInfo.InvariantCulture,DateTimeStyles.RoundtripKind,out var dt)?dt:DateTime.MinValue,
+            SupplierName=r.GetString(2),Total=Dec(r.GetValue(3)),CashRefund=Dec(r.GetValue(4)),Reason=r.GetString(5),Products=r.GetString(6)
+        });
+        return rows;
+    }
+
     public static List<PurchaseReturnableItemRow> LoadReturnablePurchaseItems(long supplierId, long? purchaseId = null)
     {
         var rows = new List<PurchaseReturnableItemRow>();
@@ -1451,4 +1472,15 @@ internal sealed class PurchaseReturnLineInput
 {
     public long PurchaseItemId { get; init; }
     public int Quantity { get; init; }
+}
+
+internal sealed class PurchaseReturnArchiveRow
+{
+    public long Id { get; init; }
+    public DateTime CreatedAt { get; init; }
+    public string SupplierName { get; init; } = "";
+    public decimal Total { get; init; }
+    public decimal CashRefund { get; init; }
+    public string Reason { get; init; } = "";
+    public string Products { get; init; } = "";
 }
