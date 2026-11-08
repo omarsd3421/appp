@@ -78,7 +78,7 @@ internal sealed class SupplierPaymentHistoryRow
     public string UserName { get; init; } = "";
 }
 
-internal sealed class PurchaseArchiveRow
+internal class PurchaseArchiveRow
 {
     public long Id { get; init; }
     public string InvoiceNumber { get; init; } = "";
@@ -103,7 +103,7 @@ internal sealed class PurchaseInvoiceItemRow
     public decimal Total { get; init; }
 }
 
-internal sealed class SalesReturnArchiveRow
+internal class SalesReturnArchiveRow
 {
     public long Id { get; init; }
     public string OriginalTransactions { get; init; } = "";
