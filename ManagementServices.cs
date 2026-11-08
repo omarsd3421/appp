@@ -249,6 +249,35 @@ CREATE TABLE IF NOT EXISTS SupplierPayments (
     FOREIGN KEY(UserId) REFERENCES AppUsers(Id)
 );
 CREATE INDEX IF NOT EXISTS IX_SupplierPayments_Supplier ON SupplierPayments(SupplierId,CreatedAt);
+CREATE TABLE IF NOT EXISTS PurchaseReturns (
+    Id INTEGER PRIMARY KEY AUTOINCREMENT,
+    SupplierId INTEGER NOT NULL,
+    UserId INTEGER NOT NULL,
+    TotalAmount NUMERIC NOT NULL,
+    CashRefund NUMERIC NOT NULL DEFAULT 0,
+    Reason TEXT NULL,
+    CreatedAt TEXT NOT NULL,
+    FOREIGN KEY(SupplierId) REFERENCES Suppliers(Id),
+    FOREIGN KEY(UserId) REFERENCES AppUsers(Id)
+);
+CREATE TABLE IF NOT EXISTS PurchaseReturnItems (
+    Id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ReturnId INTEGER NOT NULL,
+    PurchaseId INTEGER NOT NULL,
+    PurchaseItemId INTEGER NOT NULL,
+    ProductId INTEGER NOT NULL,
+    ProductNameSnapshot TEXT NOT NULL,
+    Quantity INTEGER NOT NULL,
+    UnitCost NUMERIC NOT NULL,
+    LineTotal NUMERIC NOT NULL,
+    FOREIGN KEY(ReturnId) REFERENCES PurchaseReturns(Id) ON DELETE CASCADE,
+    FOREIGN KEY(PurchaseId) REFERENCES Purchases(Id),
+    FOREIGN KEY(PurchaseItemId) REFERENCES PurchaseItems(Id),
+    FOREIGN KEY(ProductId) REFERENCES Products(Id)
+);
+CREATE INDEX IF NOT EXISTS IX_PurchaseReturns_SupplierDate ON PurchaseReturns(SupplierId,CreatedAt);
+CREATE INDEX IF NOT EXISTS IX_PurchaseReturnItems_PurchaseItem ON PurchaseReturnItems(PurchaseItemId);
+
 CREATE TABLE IF NOT EXISTS InventoryMovements (
     Id INTEGER PRIMARY KEY AUTOINCREMENT,
     ProductId INTEGER NOT NULL,
@@ -856,6 +885,142 @@ VALUES($s,$no,$t,$paid,$remain,$notes,$u,$d); SELECT last_insert_rowid();";
         return purchaseId;
     }
 
+
+    public static List<PurchaseReturnableItemRow> LoadReturnablePurchaseItems(long supplierId, long? purchaseId = null)
+    {
+        var rows = new List<PurchaseReturnableItemRow>();
+        using var c = AppDatabase.OpenConnection();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = @"SELECT pi.Id,pi.PurchaseId,pi.ProductId,pi.ProductNameSnapshot,pi.Quantity,pi.UnitCost,
+COALESCE(p.InvoiceNumber,''),p.CreatedAt,
+MAX(0,pi.Quantity-COALESCE((SELECT SUM(ri.Quantity) FROM PurchaseReturnItems ri WHERE ri.PurchaseItemId=pi.Id),0))
+FROM PurchaseItems pi
+JOIN Purchases p ON p.Id=pi.PurchaseId
+WHERE p.SupplierId=$supplier AND ($purchase IS NULL OR p.Id=$purchase)
+ORDER BY p.CreatedAt,p.Id,pi.Id";
+        cmd.Parameters.AddWithValue("$supplier", supplierId);
+        cmd.Parameters.AddWithValue("$purchase", (object?)purchaseId ?? DBNull.Value);
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            int remaining = Convert.ToInt32(r.GetValue(8), CultureInfo.InvariantCulture);
+            if (remaining <= 0) continue;
+            rows.Add(new PurchaseReturnableItemRow {
+                PurchaseItemId=r.GetInt64(0), PurchaseId=r.GetInt64(1), ProductId=r.GetInt64(2),
+                ProductName=r.GetString(3), PurchasedQuantity=Convert.ToInt32(r.GetValue(4),CultureInfo.InvariantCulture),
+                UnitCost=Dec(r.GetValue(5)), InvoiceNumber=r.GetString(6),
+                PurchaseDate=DateTime.TryParse(r.GetString(7),CultureInfo.InvariantCulture,DateTimeStyles.RoundtripKind,out var dt)?dt:DateTime.MinValue,
+                AvailableQuantity=remaining
+            });
+        }
+        // لا يمكن رد كتب خرجت من المخزن بالفعل؛ نوزع الرصيد الحالي على أقدم مشتريات المورد.
+        var stock = new Dictionary<long,int>();
+        foreach (var row in rows)
+        {
+            if (!stock.TryGetValue(row.ProductId,out int available))
+            {
+                using var q=c.CreateCommand();
+                q.CommandText="SELECT Quantity FROM Products WHERE Id=$id";
+                q.Parameters.AddWithValue("$id",row.ProductId);
+                available=Convert.ToInt32(q.ExecuteScalar() ?? 0,CultureInfo.InvariantCulture);
+            }
+            row.AvailableQuantity=Math.Min(row.AvailableQuantity,Math.Max(0,available));
+            stock[row.ProductId]=Math.Max(0,available-row.AvailableQuantity);
+        }
+        return rows.Where(x=>x.AvailableQuantity>0).ToList();
+    }
+
+    public static (long ReturnId, decimal Total, decimal SupplierCredit, decimal CashRefund) RecordPurchaseReturn(
+        string userName, long supplierId, IReadOnlyList<PurchaseReturnLineInput> lines, string? reason)
+    {
+        if(lines==null || lines.Count==0) throw new InvalidOperationException("حدد صنفًا واحدًا على الأقل لإرجاعه.");
+        if(lines.Any(x=>x.Quantity<=0 || x.PurchaseItemId<=0)) throw new InvalidOperationException("راجع كميات المرتجع.");
+        using var c=AppDatabase.OpenConnection();
+        using var tx=c.BeginTransaction();
+        long userId=AppDatabase.GetUserId(c,userName,tx);
+        decimal total=0m;
+        var validated=new List<(PurchaseReturnLineInput Line,long PurchaseId,long ProductId,string Name,decimal Cost,int Available)>();
+        foreach(var line in lines)
+        {
+            using var q=c.CreateCommand(); q.Transaction=tx;
+            q.CommandText=@"SELECT pi.PurchaseId,pi.ProductId,pi.ProductNameSnapshot,pi.UnitCost,
+pi.Quantity-COALESCE((SELECT SUM(ri.Quantity) FROM PurchaseReturnItems ri WHERE ri.PurchaseItemId=pi.Id),0),
+p.SupplierId,pr.Quantity
+FROM PurchaseItems pi JOIN Purchases p ON p.Id=pi.PurchaseId JOIN Products pr ON pr.Id=pi.ProductId
+WHERE pi.Id=$id";
+            q.Parameters.AddWithValue("$id",line.PurchaseItemId);
+            using var r=q.ExecuteReader();
+            if(!r.Read()) throw new InvalidOperationException("أحد أصناف فاتورة الشراء لم يعد موجودًا.");
+            long purchaseId=r.GetInt64(0), productId=r.GetInt64(1); string name=r.GetString(2);
+            decimal cost=Dec(r.GetValue(3)); int remain=Convert.ToInt32(r.GetValue(4),CultureInfo.InvariantCulture);
+            long owner=r.GetInt64(5); int stock=Convert.ToInt32(r.GetValue(6),CultureInfo.InvariantCulture);
+            if(owner!=supplierId) throw new InvalidOperationException("الصنف المحدد لا يتبع المورد المختار.");
+            if(line.Quantity>remain || line.Quantity>stock) throw new InvalidOperationException($"الكمية المتاحة لإرجاع ({name}) هي {Math.Min(remain,stock)} فقط؛ لا يمكن إرجاع كمية تم بيعها أو سبق إرجاعها.");
+            validated.Add((line,purchaseId,productId,name,cost,Math.Min(remain,stock)));
+            total+=line.Quantity*cost;
+        }
+        if(total<=0) throw new InvalidOperationException("قيمة المرتجع يجب أن تكون أكبر من صفر.");
+        using(var head=c.CreateCommand())
+        {
+            head.Transaction=tx;
+            head.CommandText=@"INSERT INTO PurchaseReturns(SupplierId,UserId,TotalAmount,CashRefund,Reason,CreatedAt)
+VALUES($s,$u,$t,0,$r,$d); SELECT last_insert_rowid();";
+            head.Parameters.AddWithValue("$s",supplierId); head.Parameters.AddWithValue("$u",userId);
+            head.Parameters.AddWithValue("$t",total); head.Parameters.AddWithValue("$r",DbText(reason));
+            head.Parameters.AddWithValue("$d",DateTime.Now.ToString("O",CultureInfo.InvariantCulture));
+            long returnId=Convert.ToInt64(head.ExecuteScalar(),CultureInfo.InvariantCulture);
+            foreach(var item in validated)
+            {
+                using(var ins=c.CreateCommand())
+                {
+                    ins.Transaction=tx;
+                    ins.CommandText=@"INSERT INTO PurchaseReturnItems(ReturnId,PurchaseId,PurchaseItemId,ProductId,ProductNameSnapshot,Quantity,UnitCost,LineTotal)
+VALUES($r,$p,$pi,$prod,$n,$q,$c,$t)";
+                    ins.Parameters.AddWithValue("$r",returnId); ins.Parameters.AddWithValue("$p",item.PurchaseId);
+                    ins.Parameters.AddWithValue("$pi",item.Line.PurchaseItemId); ins.Parameters.AddWithValue("$prod",item.ProductId);
+                    ins.Parameters.AddWithValue("$n",item.Name); ins.Parameters.AddWithValue("$q",item.Line.Quantity);
+                    ins.Parameters.AddWithValue("$c",item.Cost); ins.Parameters.AddWithValue("$t",item.Line.Quantity*item.Cost);
+                    ins.ExecuteNonQuery();
+                }
+                using(var upd=c.CreateCommand())
+                {
+                    upd.Transaction=tx; upd.CommandText="UPDATE Products SET Quantity=Quantity-$q,UpdatedAt=$d,StockUpdatedAt=$d WHERE Id=$id AND Quantity>=$q";
+                    upd.Parameters.AddWithValue("$q",item.Line.Quantity); upd.Parameters.AddWithValue("$d",DateTime.Now.ToString("O",CultureInfo.InvariantCulture)); upd.Parameters.AddWithValue("$id",item.ProductId);
+                    if(upd.ExecuteNonQuery()!=1) throw new InvalidOperationException("تغير رصيد المخزون أثناء تسجيل المرتجع؛ أعد تحميل البيانات.");
+                }
+                RecordInventoryMovement(c,tx,userId,item.ProductId,"PURCHASE_RETURN_OUT",-item.Line.Quantity,item.Cost,"PurchaseReturn",returnId,$"مرتجع للمورد — فاتورة شراء #{item.PurchaseId}");
+            }
+            decimal creditLeft=total;
+            var invoices=new List<(long Id,decimal Remaining)>();
+            using(var q=c.CreateCommand())
+            {
+                q.Transaction=tx; q.CommandText="SELECT Id,RemainingAmount FROM Purchases WHERE SupplierId=$s AND RemainingAmount>0 ORDER BY CreatedAt,Id";
+                q.Parameters.AddWithValue("$s",supplierId); using var rr=q.ExecuteReader();
+                while(rr.Read()) invoices.Add((rr.GetInt64(0),Dec(rr.GetValue(1))));
+            }
+            foreach(var inv in invoices)
+            {
+                if(creditLeft<=0.005m)break;
+                decimal part=Math.Min(creditLeft,inv.Remaining);
+                using var upd=c.CreateCommand(); upd.Transaction=tx;
+                upd.CommandText="UPDATE Purchases SET TotalAmount=MAX(0,TotalAmount-$a),RemainingAmount=MAX(0,RemainingAmount-$a) WHERE Id=$id";
+                upd.Parameters.AddWithValue("$a",part); upd.Parameters.AddWithValue("$id",inv.Id); upd.ExecuteNonQuery();
+                creditLeft-=part;
+            }
+            decimal cashRefund=Math.Max(0m,creditLeft);
+            using(var upd=c.CreateCommand())
+            {
+                upd.Transaction=tx; upd.CommandText="UPDATE PurchaseReturns SET CashRefund=$cash WHERE Id=$id";
+                upd.Parameters.AddWithValue("$cash",cashRefund); upd.Parameters.AddWithValue("$id",returnId); upd.ExecuteNonQuery();
+            }
+            if(cashRefund>0.005m)
+                AppDatabase.AddTreasury(c,userName,"IN","رد مورد",cashRefund,$"رد نقدي من المورد مقابل مرتجع رقم {returnId}","PurchaseReturn",returnId,tx,"DRAWER");
+            AppDatabase.AddAuditLog(c,tx,userName,"مرتجع شراء","مرتجع مورد",returnId,$"المورد: {supplierId} | القيمة: {total:F2} | تسوية رصيد المورد: {total-cashRefund:F2} | نقدي مستلم: {cashRefund:F2}");
+            tx.Commit();
+            return (returnId,total,total-cashRefund,cashRefund);
+        }
+    }
+
     public static void PaySupplier(string userName, long supplierId, decimal amount, string? note)
     {
         if (amount <= 0) throw new ArgumentOutOfRangeException(nameof(amount), "قيمة السداد يجب أن تكون أكبر من صفر.");
@@ -1268,4 +1433,22 @@ internal sealed class PurchaseLineInput
     public long ProductId { get; init; }
     public int Quantity { get; init; }
     public decimal UnitCost { get; init; }
+}
+
+internal sealed class PurchaseReturnableItemRow
+{
+    public long PurchaseItemId { get; init; }
+    public long PurchaseId { get; init; }
+    public long ProductId { get; init; }
+    public string ProductName { get; init; } = "";
+    public int PurchasedQuantity { get; init; }
+    public int AvailableQuantity { get; set; }
+    public decimal UnitCost { get; init; }
+    public string InvoiceNumber { get; init; } = "";
+    public DateTime PurchaseDate { get; init; }
+}
+internal sealed class PurchaseReturnLineInput
+{
+    public long PurchaseItemId { get; init; }
+    public int Quantity { get; init; }
 }
