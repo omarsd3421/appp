@@ -1432,6 +1432,8 @@ internal sealed class AmountNoteDialog : Form
     public AmountNoteDialog(string title, decimal maximum)
     {
         UiKit.PrepareForm(this, title, 480, 300);
+        KeyPreview = true;
+        KeyDown += (_, e) => { if (e.KeyCode == Keys.Escape) { e.Handled = true; e.SuppressKeyPress = true; Close(); } };
         var root = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(24), ColumnCount = 2, RowCount = 3 };
         root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 35)); root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 65));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 58)); root.RowStyles.Add(new RowStyle(SizeType.Absolute, 58)); root.RowStyles.Add(new RowStyle(SizeType.Absolute, 58));
@@ -1460,6 +1462,8 @@ internal sealed class AdminPasswordPromptForm : Form
         Size = new Size(390, 190);
         RightToLeft = RightToLeft.Yes; RightToLeftLayout = true;
         Font = new Font("Segoe UI", 10F); BackColor = Color.White;
+        KeyPreview = true;
+        KeyDown += (_, e) => { if (e.KeyCode == Keys.Escape) { e.Handled = true; e.SuppressKeyPress = true; DialogResult = DialogResult.Cancel; Close(); } };
         var root = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(14), ColumnCount = 1, RowCount = 3 };
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
