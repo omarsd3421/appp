@@ -35,6 +35,8 @@ namespace LibraryPrintApp
         private NumericUpDown numDuplexPrice = null!;
         private NumericUpDown numDuplexColorPrice = null!;
         private ComboBox cmbPricingPreset = null!;
+        private ComboBox cmbSelectedFileCategory = null!;
+        private Label lblSelectedFileCategory = null!;
 
         private Label lblTotalPages = null!;
         private Label lblTotalPapers = null!;
@@ -87,15 +89,18 @@ namespace LibraryPrintApp
             public string OriginalPath { get; }
             public string PrintPath { get; }
             public PrintOptions Options { get; }
+            public string? PricingCategory { get; }
 
             public FileEntry(
                 string originalPath,
                 string printPath,
-                PrintOptions? options = null)
+                PrintOptions? options = null,
+                string? pricingCategory = null)
             {
                 OriginalPath = originalPath;
                 PrintPath = printPath;
                 Options = options?.Clone() ?? new PrintOptions();
+                PricingCategory = string.IsNullOrWhiteSpace(pricingCategory) ? null : pricingCategory.Trim();
             }
         }
 
@@ -701,6 +706,29 @@ namespace LibraryPrintApp
             btnEditImage.Click +=
                 BtnEditImage_Click;
 
+            // فئة مستقلة للملفات المحددة فقط، دون تغيير بقية الملفات.
+            lblSelectedFileCategory = new Label
+            {
+                Text = "الفئة للملفات المحددة:",
+                Location = new Point(1178, 108),
+                Width = 205,
+                Height = 24,
+                TextAlign = ContentAlignment.MiddleRight,
+                Font = labelFont
+            };
+            cmbSelectedFileCategory = new ComboBox
+            {
+                Location = new Point(1178, 132),
+                Width = 205,
+                Height = 30,
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                Font = controlFont
+            };
+            cmbSelectedFileCategory.Items.AddRange(new object[] { "حسب فئة الشاشة", "الطلبة", "عادي", "مخصص" });
+            cmbSelectedFileCategory.SelectedIndex = 0;
+            ComboBoxStyler.ApplyModernStyle(cmbSelectedFileCategory, Color.FromArgb(52, 73, 94));
+            cmbSelectedFileCategory.SelectedIndexChanged += (_, _) => ApplySelectedFilePricingCategory();
+
             // ========================================================
             // تسجيل خروج من المستخدم الحالي
             // ========================================================
@@ -843,7 +871,9 @@ namespace LibraryPrintApp
                     btnCopyService,
                     btnAdminSettings,
                     btnLogout,
-                    btnEditImage
+                    btnEditImage,
+                    lblSelectedFileCategory,
+                    cmbSelectedFileCategory
                 });
 
             // ========================================================
@@ -1946,7 +1976,7 @@ namespace LibraryPrintApp
                     Directory.CreateDirectory(dir);
                     workPath = Path.Combine(dir, Path.GetFileName(entry.PrintPath));
                     File.Copy(entry.PrintPath, workPath, true);
-                    row.Tag = new FileEntry(entry.OriginalPath, workPath, entry.Options);
+                    row.Tag = new FileEntry(entry.OriginalPath, workPath, entry.Options, entry.PricingCategory);
                 }
 
                 var info = new FileInfo(workPath);
@@ -2303,7 +2333,8 @@ namespace LibraryPrintApp
                 selectedRow.Tag = new FileEntry(
                     selectedEntry.OriginalPath,
                     selectedEntry.PrintPath,
-                    applied);
+                    applied,
+                    selectedEntry.PricingCategory);
             }
 
             if (optionsForm.ApplyToAll)
@@ -2318,7 +2349,8 @@ namespace LibraryPrintApp
                     allRow.Tag = new FileEntry(
                         allEntry.OriginalPath,
                         allEntry.PrintPath,
-                        applied);
+                        applied,
+                        allEntry.PricingCategory);
                 }
             }
 
@@ -6104,27 +6136,72 @@ namespace LibraryPrintApp
         // ============================================================
         private decimal GetPricePerFace(
             string colorType,
-            string duplexMode)
+            string duplexMode,
+            string? pricingCategory = null)
         {
-            bool isDuplex =
-                duplexMode == "وش وظهر";
+            bool isDuplex = duplexMode == "وش وظهر";
+            bool isColor = colorType == "ألوان";
 
-            bool isColor =
-                colorType == "ألوان";
-
-            if (isDuplex && isColor)
+            if (!string.IsNullOrWhiteSpace(pricingCategory))
             {
-                return LiveNumericValue(numDuplexColorPrice);
+                PricingSettings saved = PricingStore.Load();
+                return pricingCategory switch
+                {
+                    "الطلبة" => isDuplex
+                        ? (isColor ? saved.StudentDuplexColor : saved.StudentDuplexBlack)
+                        : (isColor ? saved.StudentColor : saved.StudentBlack),
+                    "عادي" => isDuplex
+                        ? (isColor ? saved.NormalDuplexColor : saved.NormalDuplexBlack)
+                        : (isColor ? saved.NormalColor : saved.NormalBlack),
+                    "مخصص" => isDuplex
+                        ? (isColor ? saved.CustomDuplexColor : saved.CustomDuplexBlack)
+                        : (isColor ? saved.CustomColor : saved.CustomBlack),
+                    _ => GetPricePerFace(colorType, duplexMode, null)
+                };
             }
 
-            if (isDuplex)
+            if (isDuplex && isColor) return LiveNumericValue(numDuplexColorPrice);
+            if (isDuplex) return LiveNumericValue(numDuplexPrice);
+            return isColor ? LiveNumericValue(numColorPrice) : LiveNumericValue(numBlackPrice);
+        }
+
+        private string ResolveRowPricingCategory(DataGridViewRow row)
+        {
+            if (row.Tag is FileEntry entry && !string.IsNullOrWhiteSpace(entry.PricingCategory))
+                return entry.PricingCategory;
+            return cmbPricingPreset.SelectedItem?.ToString() ?? "عادي";
+        }
+
+        private void ApplySelectedFilePricingCategory()
+        {
+            if (gridFiles == null || cmbSelectedFileCategory == null || gridFiles.Rows.Count == 0)
+                return;
+
+            var rows = gridFiles.SelectedRows.Cast<DataGridViewRow>()
+                .Where(r => !r.IsNewRow && r.Tag is FileEntry)
+                .ToList();
+            if (rows.Count == 0)
             {
-                return LiveNumericValue(numDuplexPrice);
+                // لا نظهر رسالة عند تهيئة الواجهة؛ الرسالة فقط عند اختيار قيمة يدوية.
+                if (cmbSelectedFileCategory.SelectedIndex > 0)
+                    MessageBox.Show(this, "حدد ملفًا واحدًا أو أكثر من الجدول أولًا، ثم اختر الفئة.", "فئة الملفات", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
             }
 
-            return isColor
-                ? LiveNumericValue(numColorPrice)
-                : LiveNumericValue(numBlackPrice);
+            string? category = cmbSelectedFileCategory.SelectedIndex <= 0
+                ? null
+                : cmbSelectedFileCategory.SelectedItem?.ToString();
+
+            foreach (DataGridViewRow row in rows)
+            {
+                var entry = (FileEntry)row.Tag!;
+                row.Tag = new FileEntry(entry.OriginalPath, entry.PrintPath, entry.Options, category);
+                row.Cells["FileName"].ToolTipText =
+                    entry.OriginalPath + (category == null ? "\nالفئة: حسب فئة الشاشة" : "\nالفئة: " + category);
+            }
+
+            RecalculateTotals();
+            UpdateRightPreview();
         }
 
         // ============================================================
@@ -6158,7 +6235,8 @@ namespace LibraryPrintApp
             int copies,
             int pagesPerSheet,
             string colorType,
-            string duplexMode)
+            string duplexMode,
+            string? pricingCategory = null)
         {
             int pages = Math.Max(1, selectedPages);
             int copyCount = Math.Max(1, copies);
@@ -6171,7 +6249,7 @@ namespace LibraryPrintApp
                 : sidesPerCopy;
 
             int billableSides = sidesPerCopy * copyCount;
-            decimal pricePerSide = GetPricePerFace(colorType, duplexMode);
+            decimal pricePerSide = GetPricePerFace(colorType, duplexMode, pricingCategory);
 
             // التسعير الدقيق:
             // - وش واحد: كل وجه × سعر الوش.
@@ -6186,7 +6264,7 @@ namespace LibraryPrintApp
                 int lastSingleSide = sidesPerCopy % 2;
 
                 decimal singleFacePrice =
-                    GetPricePerFace(colorType, "وش واحد");
+                    GetPricePerFace(colorType, "وش واحد", pricingCategory);
 
                 totalPerCopy =
                     (fullPairs * 2 * pricePerSide) +
@@ -6486,7 +6564,8 @@ namespace LibraryPrintApp
                         copies,
                         pagesPerSheet,
                         colorType,
-                        duplexMode);
+                        duplexMode,
+                        row.Tag is FileEntry rowEntry ? rowEntry.PricingCategory : null);
 
                     int printedFaces = pricing.Faces;
                     int physicalSheets = pricing.PhysicalSheets;
@@ -6627,7 +6706,8 @@ namespace LibraryPrintApp
                     copies,
                     GetPagesPerSheet(row),
                     colorType,
-                    duplexMode);
+                    duplexMode,
+                    row.Tag is FileEntry rowEntry ? rowEntry.PricingCategory : null);
 
                 pages += pricing.Faces;
                 papers += pricing.PhysicalSheets;
@@ -6969,18 +7049,19 @@ namespace LibraryPrintApp
                 int selectedPages =
                     GetSelectedPageCount(row, totalFilePages);
 
+                string pricingCategory = ResolveRowPricingCategory(row);
                 var jobOptions = (entry?.Options ?? new PrintOptions()).Clone();
-                jobOptions.PriceBlackSimpleSnapshot = LiveNumericValue(numBlackPrice);
-                jobOptions.PriceBlackDuplexSnapshot = LiveNumericValue(numDuplexPrice);
-                jobOptions.PriceColorSimpleSnapshot = LiveNumericValue(numColorPrice);
-                jobOptions.PriceColorDuplexSnapshot = LiveNumericValue(numDuplexColorPrice);
+                jobOptions.PriceBlackSimpleSnapshot = GetPricePerFace("أسود", "وش واحد", pricingCategory);
+                jobOptions.PriceBlackDuplexSnapshot = GetPricePerFace("أسود", "وش وظهر", pricingCategory);
+                jobOptions.PriceColorSimpleSnapshot = GetPricePerFace("ألوان", "وش واحد", pricingCategory);
+                jobOptions.PriceColorDuplexSnapshot = GetPricePerFace("ألوان", "وش وظهر", pricingCategory);
 
                 jobs.Add(new PrintJobItem
                 {
                     FilePath = filePath,
                     FileName = row.Cells["FileName"].Value?.ToString() ?? "",
                     FileType = row.Cells["FileType"].Value?.ToString() ?? "",
-                    PricingCategory = cmbPricingPreset.SelectedItem?.ToString() ?? "عادي",
+                    PricingCategory = pricingCategory,
                     Copies = copies,
                     ColorType = colorType,
                     DuplexMode = duplexMode,
@@ -6991,7 +7072,8 @@ namespace LibraryPrintApp
                         copies,
                         GetPagesPerSheet(row),
                         colorType,
-                        duplexMode)
+                        duplexMode,
+                        pricingCategory)
                 });
             }
 
