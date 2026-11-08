@@ -57,7 +57,8 @@ namespace LibraryPrintApp
             MaximizeBox = false;
             MinimizeBox = false;
             ShowInTaskbar = false;
-            Size = new Size(760, 760);
+            Size = new Size(960, 760);
+            MinimumSize = new Size(900, 700);
             Font = new Font("Segoe UI", 10F);
             RightToLeft = RightToLeft.Yes;
             RightToLeftLayout = true;
@@ -111,7 +112,7 @@ namespace LibraryPrintApp
                 float rowHeight = i switch
                 {
                     0 => 112f,
-                    8 => 50f,
+                    8 => 0f,
                     9 => 52f,
                     10 => 32f,
                     11 => 38f,
@@ -297,25 +298,43 @@ namespace LibraryPrintApp
             cmbPrintTemplates = CreateCombo(145);
             cmbPrintTemplates.DropDownStyle = ComboBoxStyle.DropDownList;
             RefreshPrintTemplateList();
-            var templatePanel = new FlowLayoutPanel
+            cmbPrintTemplates.Width = 150;
+            var loadTemplate = MakeButton("تحميل القالب", Color.FromArgb(0, 123, 167), 150);
+            loadTemplate.Height = 38; loadTemplate.Click += (s, e) => LoadSelectedPrintTemplate();
+            var saveTemplate = MakeButton("حفظ كقالب", Color.FromArgb(40, 167, 69), 150);
+            saveTemplate.Height = 38; saveTemplate.Click += (s, e) => SaveCurrentPrintTemplate();
+            var deleteTemplate = MakeButton("حذف القالب", Color.FromArgb(180, 65, 65), 150);
+            deleteTemplate.Height = 38; deleteTemplate.Click += (s, e) => DeleteSelectedPrintTemplate();
+
+            // نستغل العمود الجانبي الفارغ لقوالب الطباعة بدل حشرها أفقيًا بين الخيارات.
+            var templateSidebar = new TableLayoutPanel
             {
                 Dock = DockStyle.Fill,
-                FlowDirection = FlowDirection.RightToLeft,
-                WrapContents = false,
-                Padding = new Padding(2),
-                Margin = new Padding(2)
+                ColumnCount = 1,
+                RowCount = 5,
+                Padding = new Padding(8),
+                BackColor = Color.White
             };
-            cmbPrintTemplates.Width = 145;
-            var loadTemplate = MakeButton("تحميل", Color.FromArgb(0, 123, 167), 68);
-            loadTemplate.Height = 32; loadTemplate.Click += (s, e) => LoadSelectedPrintTemplate();
-            var saveTemplate = MakeButton("حفظ كقالب", Color.FromArgb(40, 167, 69), 88);
-            saveTemplate.Height = 32; saveTemplate.Click += (s, e) => SaveCurrentPrintTemplate();
-            var deleteTemplate = MakeButton("حذف", Color.FromArgb(180, 65, 65), 62);
-            deleteTemplate.Height = 32; deleteTemplate.Click += (s, e) => DeleteSelectedPrintTemplate();
-            templatePanel.Controls.Add(cmbPrintTemplates);
-            templatePanel.Controls.Add(loadTemplate);
-            templatePanel.Controls.Add(saveTemplate);
-            templatePanel.Controls.Add(deleteTemplate);
+            templateSidebar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            templateSidebar.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
+            templateSidebar.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
+            templateSidebar.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
+            templateSidebar.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
+            templateSidebar.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
+            var templateTitle = new Label
+            {
+                Text = "قوالب إعدادات الطباعة",
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleCenter,
+                Font = new Font("Segoe UI", 10.5F, FontStyle.Bold),
+                ForeColor = Color.FromArgb(52, 73, 94)
+            };
+            cmbPrintTemplates.Dock = DockStyle.Fill;
+            templateSidebar.Controls.Add(templateTitle, 0, 0);
+            templateSidebar.Controls.Add(cmbPrintTemplates, 0, 1);
+            templateSidebar.Controls.Add(loadTemplate, 0, 2);
+            templateSidebar.Controls.Add(saveTemplate, 0, 3);
+            templateSidebar.Controls.Add(deleteTemplate, 0, 4);
 
             lblRangeInfo = new Label
             {
@@ -341,8 +360,6 @@ namespace LibraryPrintApp
             layout.Controls.Add(marginsPanel, 1, 6);
             layout.Controls.Add(L("المسافة بين الصفحات (بوصة):"), 0, 7);
             layout.Controls.Add(Wrap(numNUpGapInches), 1, 7);
-            layout.Controls.Add(L("قوالب إعدادات الطباعة:"), 0, 8);
-            layout.Controls.Add(templatePanel, 1, 8);
             layout.Controls.Add(L("تقليب الورق وش وظهر:"), 0, 9);
             layout.Controls.Add(Wrap(cmbDuplexBinding), 1, 9);
             layout.Controls.Add(lblRangeInfo, 0, 10);
@@ -380,7 +397,53 @@ namespace LibraryPrintApp
             bottom.Controls.Add(btnCancel);
             bottom.Controls.Add(btnOk);
 
-            Controls.Add(layout);
+            var mainSplit = new SplitContainer
+            {
+                Dock = DockStyle.Fill,
+                Orientation = Orientation.Vertical,
+                FixedPanel = FixedPanel.Panel1,
+                IsSplitterFixed = true,
+                // ابدأ بدون حدود دنيا ثابتة؛ WinForms ينشئ الـ SplitContainer قبل
+                // اكتمال Dock layout أحيانًا، ويكون عرضه المؤقت أصغر من مجموع الحدين.
+                // FitTemplateSplitter يضبط المسافة بأمان بعد ظهور النافذة.
+                Panel1MinSize = 0,
+                Panel2MinSize = 0,
+                RightToLeft = RightToLeft.Yes,
+                BackColor = Color.FromArgb(224, 228, 233)
+            };
+            // لا تضبط SplitterDistance قبل حساب المساحة الفعلية؛ WinForms يرمي
+            // ArgumentOutOfRangeException إذا لم تتسع النافذة لمجموع الحدين الأدنى.
+            void FitTemplateSplitter()
+            {
+                if (mainSplit.IsDisposed || !mainSplit.IsHandleCreated) return;
+
+                // نستخدم الحدود الفعلية لعرض النافذة بعد اكتمال التخطيط.
+                // عند الشاشات الضيقة نصغّر اللوحة الجانبية بدل ضبط مسافة غير صالحة.
+                int width = mainSplit.ClientSize.Width;
+                int splitter = mainSplit.SplitterWidth;
+                int available = Math.Max(0, width - splitter);
+                int desiredPanel2 = 420;
+                int maxPanel1 = Math.Max(0, available - desiredPanel2);
+                int target = Math.Clamp(178, 0, maxPanel1);
+
+                try
+                {
+                    if (mainSplit.SplitterDistance != target)
+                        mainSplit.SplitterDistance = target;
+                }
+                catch (ArgumentOutOfRangeException)
+                {
+                    // قد يطلق WinForms حدث SizeChanged أثناء تغيير الحجم الوسيط.
+                    // سيعاد الحساب عند Shown/SizeChanged التالي.
+                }
+            }
+            mainSplit.SizeChanged += (_, _) => FitTemplateSplitter();
+            mainSplit.Panel1.Controls.Add(templateSidebar);
+            mainSplit.Panel2.Controls.Add(layout);
+            mainSplit.HandleCreated += (_, _) => FitTemplateSplitter();
+            Shown += (_, _) => FitTemplateSplitter();
+
+            Controls.Add(mainSplit);
             Controls.Add(header);
             Controls.Add(bottom);
 

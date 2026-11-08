@@ -48,6 +48,7 @@ internal sealed class BusinessManagementForm : Form
     private readonly Label profitSummary = new();
     private readonly DataGridView profitProductGrid = new();
     private readonly DataGridView profitEmployeeGrid = new();
+    private readonly DataGridView profitPrintingGrid = new();
     private ProfitSnapshot? lastProfit;
 
     // البحث العام
@@ -57,6 +58,11 @@ internal sealed class BusinessManagementForm : Form
     // أرشيف الفواتير
     private readonly TextBox invoiceSearch = new();
     private readonly DataGridView invoiceGrid = new();
+    private readonly TextBox purchaseArchiveSearch = new();
+    private readonly DataGridView purchaseArchiveGrid = new();
+    private readonly TextBox returnArchiveSearch = new();
+    private readonly DataGridView returnArchiveGrid = new();
+    private readonly DataGridView supplierPaymentGrid = new();
 
     public BusinessManagementForm(string userName)
     {
@@ -67,6 +73,9 @@ internal sealed class BusinessManagementForm : Form
         LoadPurchaseProducts("");
         LoadReturnRows();
         LoadInvoiceRows();
+        LoadPurchaseArchive();
+        LoadReturnArchive();
+        LoadSupplierPayments();
         LoadStockHistory();
         InputFocusHelper.Apply(this);
     }
@@ -102,23 +111,29 @@ internal sealed class BusinessManagementForm : Form
     private TabPage BuildSuppliersTab()
     {
         var page = NewTab("👤 الموردون");
-        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 4, Padding = new Padding(8) };
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 5, Padding = new Padding(8) };
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 72));
-        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 45));
-        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 55));
+        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 34));
+        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 31));
+        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 35));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
+
         var bar = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, WrapContents = false, Padding = new Padding(4) };
         ConfigureText(supplierName, "اسم المورد *", 210); ConfigureText(supplierPhone, "رقم الهاتف", 150); ConfigureText(supplierAddress, "العنوان", 190);
         bar.Controls.Add(supplierName); bar.Controls.Add(supplierPhone); bar.Controls.Add(supplierAddress);
         var add = UiKit.Button("➕ إضافة مورد", UiKit.Success, 135, 40); add.Click += (_, _) => AddSupplier(); bar.Controls.Add(add);
         var pay = UiKit.Button("💵 سداد حساب المورد المحدد", Color.FromArgb(0, 121, 107), 200, 40); pay.Click += (_, _) => PaySelectedSupplier(); bar.Controls.Add(pay);
+        var details = UiKit.Button("📋 تفاصيل المورد", Color.FromArgb(75, 85, 99), 145, 40); details.Click += (_, _) => ShowSelectedSupplierDetails(); bar.Controls.Add(details);
         layout.Controls.Add(bar, 0, 0);
+
         StyleBusinessGrid(supplierGrid);
         supplierGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Id", Visible = false });
         supplierGrid.Columns.Add(UiKit.GridText("Name", "اسم المورد", 280));
         supplierGrid.Columns.Add(UiKit.GridText("Phone", "الهاتف", 180));
-        supplierGrid.Columns.Add(UiKit.GridText("Balance", "المستحق للمورد", 180));
+        supplierGrid.Columns.Add(UiKit.GridText("Balance", "صافي الحساب (السالب = لنا)", 180));
+        supplierGrid.CellDoubleClick += (_, e) => { if (e.RowIndex >= 0) ShowSelectedSupplierDetails(); };
         layout.Controls.Add(supplierGrid, 0, 1);
+
         StyleBusinessGrid(supplierPurchaseGrid);
         supplierPurchaseGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Id", Visible = false });
         supplierPurchaseGrid.Columns.Add(UiKit.GridText("Date", "تاريخ الفاتورة", 170));
@@ -126,10 +141,22 @@ internal sealed class BusinessManagementForm : Form
         supplierPurchaseGrid.Columns.Add(UiKit.GridText("Total", "الإجمالي", 130));
         supplierPurchaseGrid.Columns.Add(UiKit.GridText("Paid", "المدفوع", 130));
         supplierPurchaseGrid.Columns.Add(UiKit.GridText("Remaining", "المتبقي", 130));
-        supplierGrid.SelectionChanged += (_, _) => LoadSupplierPurchaseHistory();
+        supplierPurchaseGrid.CellDoubleClick += (_, e) => { if (e.RowIndex >= 0) ShowPurchaseInvoiceDetailsFromGrid(supplierPurchaseGrid); };
         layout.Controls.Add(supplierPurchaseGrid, 0, 2);
-        var note = MakeHint("رصيد المورد محسوب تلقائيًا من فواتير الشراء غير المسددة. السداد يوزّع المبلغ على أقدم الفواتير أولًا.");
-        layout.Controls.Add(note, 0, 3);
+
+        StyleBusinessGrid(supplierPaymentGrid);
+        supplierPaymentGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Id", Visible = false });
+        supplierPaymentGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "PurchaseId", Visible = false });
+        supplierPaymentGrid.Columns.Add(UiKit.GridText("Date", "تاريخ الدفعة", 165));
+        supplierPaymentGrid.Columns.Add(UiKit.GridText("Invoice", "الفاتورة", 140));
+        supplierPaymentGrid.Columns.Add(UiKit.GridText("Amount", "المبلغ", 120));
+        supplierPaymentGrid.Columns.Add(UiKit.GridText("Note", "البيان", 220));
+        supplierPaymentGrid.Columns.Add(UiKit.GridText("User", "المستخدم", 130));
+        supplierPaymentGrid.CellDoubleClick += (_, e) => { if (e.RowIndex >= 0) ShowPurchaseInvoiceDetailsFromGrid(supplierPaymentGrid); };
+        layout.Controls.Add(supplierPaymentGrid, 0, 3);
+
+        supplierGrid.SelectionChanged += (_, _) => { LoadSupplierPurchaseHistory(); LoadSupplierPayments(); };
+        layout.Controls.Add(MakeHint("دبل كليك على المورد لعرض بياناته وسجل الدفعات. تعديل الاسم أو الهاتف أو العنوان يتطلب كلمة مرور الإدارة. دبل كليك على فاتورة أو دفعة يعرض تفاصيلها."), 0, 4);
         page.Controls.Add(layout);
         return page;
     }
@@ -177,20 +204,277 @@ internal sealed class BusinessManagementForm : Form
         var del = UiKit.Button("حذف السطر المحدد", UiKit.Danger, 145, 40); del.Click += (_, _) => RemovePurchaseLine(); footer.Controls.Add(del);
         var save = UiKit.Button("💾 حفظ فاتورة الشراء وتحديث المخزن", Color.FromArgb(0, 121, 107), 260, 42); save.Click += (_, _) => SavePurchase(); footer.Controls.Add(save);
         var clear = UiKit.Button("تفريغ", Color.FromArgb(108, 117, 125), 90, 40); clear.Click += (_, _) => ClearPurchase(); footer.Controls.Add(clear);
+        var supplierReturn = UiKit.Button("↩ مرتجع للمورد", UiKit.Danger, 165, 42); supplierReturn.Click += (_, _) => ShowPurchaseReturnDialog(); footer.Controls.Add(supplierReturn);
+        var supplierReturnArchive = UiKit.Button("أرشيف مرتجعات الموردين", Color.FromArgb(75,85,99), 190, 42); supplierReturnArchive.Click += (_, _) => ShowPurchaseReturnArchive(); footer.Controls.Add(supplierReturnArchive);
         root.Controls.Add(footer, 0, 3);
         page.Controls.Add(root);
         return page;
     }
 
+
+    private void ShowPurchaseReturnDialog()
+    {
+        using var dialog = new Form
+        {
+            Text = "مرتجع مشتريات إلى المورد",
+            StartPosition = FormStartPosition.CenterParent,
+            Size = new Size(1180, 780), MinimumSize = new Size(980, 660),
+            RightToLeft = RightToLeft.Yes, RightToLeftLayout = true,
+            Font = new Font("Segoe UI", 10F), BackColor = UiKit.Background
+        };
+        EnableEscapeClose(dialog);
+        var root = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 5, Padding = new Padding(12) };
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 88));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
+        root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 70));
+
+        var top = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, WrapContents = true, AutoScroll = false, Padding = new Padding(2) };
+        var supplier = new ComboBox { Width = 250, DropDownStyle = ComboBoxStyle.DropDownList, Font = new Font("Segoe UI", 10F) };
+        foreach (var item in BusinessManagementStore.LoadSuppliers()) supplier.Items.Add(item);
+        var invoice = new ComboBox { Width = 270, DropDownStyle = ComboBoxStyle.DropDownList, Font = new Font("Segoe UI", 10F) };
+        var reason = new TextBox { Width = 220, PlaceholderText = "سبب/ملاحظة المرتجع" };
+        top.Controls.Add(LabeledControl("المورد", supplier, 275));
+        top.Controls.Add(LabeledControl("الفاتورة", invoice, 295));
+        top.Controls.Add(LabeledControl("ملاحظات", reason, 245));
+        root.Controls.Add(top, 0, 0);
+
+        var tools = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, WrapContents = false, Padding = new Padding(2) };
+        var search = new TextBox { Width = 235, PlaceholderText = "بحث باسم الصنف أو رقم الفاتورة", Font = new Font("Segoe UI", 10F) };
+        var fillAll = UiKit.Button("تحديد كل المتاح", UiKit.Primary, 150, 38);
+        var clearAll = UiKit.Button("مسح الكميات", Color.FromArgb(108,117,125), 125, 38);
+        var fillCurrent = UiKit.Button("كمية السطر المحدد", Color.FromArgb(75,85,99), 165, 38);
+        tools.Controls.Add(search); tools.Controls.Add(fillAll); tools.Controls.Add(fillCurrent); tools.Controls.Add(clearAll);
+        root.Controls.Add(tools, 0, 1);
+
+        var hint = MakeHint("الأصناف المباعة بالكامل تظهر بالرمادي ولا تقبل الإرجاع. اختر «تحديد كل المتاح» للمرتجع الكبير، أو اكتب الكمية مباشرة. الاختصارات: Ctrl+A تحديد كل المتاح، Ctrl+Backspace مسح، F2 ملء السطر المحدد، Ctrl+Enter تأكيد.");
+        root.Controls.Add(hint, 0, 2);
+
+        var grid = new DataGridView { Dock = DockStyle.Fill, AllowUserToAddRows = false, AllowUserToDeleteRows = false, MultiSelect = false, SelectionMode = DataGridViewSelectionMode.CellSelect, AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill };
+        StyleBusinessGrid(grid);
+        grid.ReadOnly = false;
+        grid.Columns.Add(new DataGridViewTextBoxColumn { Name="PurchaseItemId", Visible=false, ReadOnly=true });
+        grid.Columns.Add(new DataGridViewTextBoxColumn { Name="PurchaseId", Visible=false, ReadOnly=true });
+        grid.Columns.Add(UiKit.GridText("Invoice","فاتورة الشراء",100));
+        grid.Columns.Add(UiKit.GridText("Date","تاريخ الشراء",105));
+        grid.Columns.Add(UiKit.GridText("Product","الصنف",210));
+        grid.Columns.Add(UiKit.GridText("Purchased","المشتَرى",65));
+        grid.Columns.Add(UiKit.GridText("Returned","مرتجع سابقًا",75));
+        grid.Columns.Add(UiKit.GridText("Available","المتاح للرد",75));
+        grid.Columns.Add(UiKit.GridText("Status","حالة الصنف",145));
+        grid.Columns.Add(UiKit.GridText("Cost","تكلفة الوحدة",85));
+        var qtyCol = new DataGridViewTextBoxColumn { Name="ReturnQty", HeaderText="كمية المرتجع", FillWeight=90, ReadOnly=false };
+        grid.Columns.Add(qtyCol);
+        foreach (DataGridViewColumn column in grid.Columns) column.ReadOnly = true;
+        qtyCol.ReadOnly = false;
+        root.Controls.Add(grid, 0, 3);
+
+        var footer = new FlowLayoutPanel { Dock=DockStyle.Fill, FlowDirection=FlowDirection.RightToLeft, WrapContents=false, Padding=new Padding(3) };
+        var totalLabel = new Label { AutoSize=true, Text="إجمالي المرتجع: 0.00 ج.م", Font=new Font("Segoe UI",11F,FontStyle.Bold), ForeColor=UiKit.Text, Padding=new Padding(8,10,8,0) };
+        var refresh = UiKit.Button("تحديث الأصناف", UiKit.Primary, 125, 40);
+        var save = UiKit.Button("تأكيد مرتجع المورد", UiKit.Danger, 180, 42);
+        var close = UiKit.Button("إغلاق", Color.FromArgb(108,117,125), 95, 40);
+        footer.Controls.Add(totalLabel); footer.Controls.Add(refresh); footer.Controls.Add(save); footer.Controls.Add(close);
+        root.Controls.Add(footer,0,4);
+        dialog.Controls.Add(root);
+
+        void Recalc()
+        {
+            decimal total=0m; int selectedQty=0; int selectedLines=0;
+            foreach(DataGridViewRow row in grid.Rows)
+            {
+                if(row.IsNewRow) continue;
+                int qty=0; int.TryParse(Convert.ToString(row.Cells["ReturnQty"].Value),out qty);
+                decimal cost=0m; decimal.TryParse(Convert.ToString(row.Cells["Cost"].Value),NumberStyles.Any,CultureInfo.CurrentCulture,out cost);
+                if(qty>0){selectedQty+=qty;selectedLines++;total+=qty*cost;}
+            }
+            totalLabel.Text=$"الأصناف المحددة: {selectedLines} | الكميات: {selectedQty:N0} | إجمالي المرتجع: {total:N2} ج.م";
+        }
+        void ApplySearch()
+        {
+            string q=(search.Text??"").Trim();
+            foreach(DataGridViewRow row in grid.Rows)
+                row.Visible=string.IsNullOrWhiteSpace(q) ||
+                    Convert.ToString(row.Cells["Product"].Value)?.Contains(q,StringComparison.CurrentCultureIgnoreCase)==true ||
+                    Convert.ToString(row.Cells["Invoice"].Value)?.Contains(q,StringComparison.CurrentCultureIgnoreCase)==true;
+        }
+        void FillRow(DataGridViewRow row)
+        {
+            int available=Convert.ToInt32(row.Cells["Available"].Value,CultureInfo.InvariantCulture);
+            if(available>0) row.Cells["ReturnQty"].Value=available;
+        }
+        void LoadInvoiceChoices()
+        {
+            invoice.Items.Clear();
+            invoice.Items.Add(new PurchaseInvoiceChoice(null,"كل فواتير المورد"));
+            if(supplier.SelectedItem is SupplierLookupRow selected)
+                foreach(var p in BusinessManagementStore.LoadPurchaseArchiveRows("",selected.Id))
+                    invoice.Items.Add(new PurchaseInvoiceChoice(p.Id,$"#{p.Id} — {p.InvoiceNumber} — {p.CreatedAt:yyyy-MM-dd}"));
+            invoice.SelectedIndex=0;
+        }
+        void LoadRows()
+        {
+            grid.Rows.Clear();
+            if(supplier.SelectedItem is not SupplierLookupRow selected){Recalc();return;}
+            long? purchaseId=(invoice.SelectedItem as PurchaseInvoiceChoice)?.PurchaseId;
+            foreach(var item in BusinessManagementStore.LoadReturnablePurchaseItems(selected.Id,purchaseId))
+            {
+                string status = item.AvailableQuantity>0 ? "متاح للرد"
+                    : item.UnreturnedQuantity<=0 ? "تم رد الكمية بالكامل"
+                    : "تم بيع الكمية بالكامل";
+                int index=grid.Rows.Add(item.PurchaseItemId,item.PurchaseId,
+                    string.IsNullOrWhiteSpace(item.InvoiceNumber)?"#"+item.PurchaseId:item.InvoiceNumber,
+                    item.PurchaseDate.ToString("yyyy-MM-dd"),item.ProductName,item.PurchasedQuantity,
+                    item.ReturnedQuantity,item.AvailableQuantity,status,item.UnitCost.ToString("N2"),0);
+                var row=grid.Rows[index];
+                if(item.AvailableQuantity<=0)
+                {
+                    row.DefaultCellStyle.BackColor=Color.FromArgb(225,228,232);
+                    row.DefaultCellStyle.ForeColor=Color.FromArgb(105,112,120);
+                    row.Cells["ReturnQty"].ReadOnly=true;
+                    row.Cells["ReturnQty"].Value=0;
+                }
+                else
+                {
+                    row.Cells["ReturnQty"].ReadOnly=false;
+                    row.Cells["ReturnQty"].Style.BackColor=Color.FromArgb(240,248,255);
+                }
+            }
+            ApplySearch(); Recalc();
+        }
+        void FillAllAvailable()
+        {
+            foreach(DataGridViewRow row in grid.Rows) FillRow(row);
+            Recalc();
+        }
+        void ClearQuantities()
+        {
+            foreach(DataGridViewRow row in grid.Rows)
+                if(!row.Cells["ReturnQty"].ReadOnly) row.Cells["ReturnQty"].Value=0;
+            Recalc();
+        }
+        void FillCurrentRow()
+        {
+            if(grid.CurrentRow!=null) FillRow(grid.CurrentRow);
+            Recalc();
+        }
+
+        supplier.SelectedIndexChanged += (_,_)=>{LoadInvoiceChoices();LoadRows();};
+        invoice.SelectedIndexChanged += (_,_)=>LoadRows();
+        search.TextChanged += (_,_)=>ApplySearch();
+        grid.CellValueChanged += (_,_)=>Recalc();
+        grid.CurrentCellDirtyStateChanged += (_,_)=>{if(grid.IsCurrentCellDirty)grid.CommitEdit(DataGridViewDataErrorContexts.Commit);};
+        grid.CellValidating += (_,e)=>{
+            if(e.ColumnIndex<0 || grid.Columns[e.ColumnIndex].Name!="ReturnQty")return;
+            int qty=0; int.TryParse(Convert.ToString(grid.Rows[e.RowIndex].Cells[e.ColumnIndex].EditedFormattedValue),out qty);
+            int available=Convert.ToInt32(grid.Rows[e.RowIndex].Cells["Available"].Value,CultureInfo.InvariantCulture);
+            if(qty<0 || qty>available){e.Cancel=true;MessageBox.Show(dialog,$"الكمية يجب أن تكون من صفر إلى {available}.","كمية المرتجع",MessageBoxButtons.OK,MessageBoxIcon.Information);}
+        };
+        grid.KeyDown += (_,e)=>{
+            if(e.Control && e.KeyCode==Keys.A){e.Handled=true;FillAllAvailable();}
+            else if(e.Control && e.KeyCode==Keys.Back){e.Handled=true;ClearQuantities();}
+            else if(e.KeyCode==Keys.F2){e.Handled=true;FillCurrentRow();}
+        };
+        fillAll.Click += (_,_)=>FillAllAvailable();
+        clearAll.Click += (_,_)=>ClearQuantities();
+        fillCurrent.Click += (_,_)=>FillCurrentRow();
+        refresh.Click += (_,_)=>LoadRows();
+        close.Click += (_,_)=>dialog.Close();
+        save.Click += (_,_) =>
+        {
+            try
+            {
+                grid.EndEdit();
+                if(supplier.SelectedItem is not SupplierLookupRow selected) throw new InvalidOperationException("اختر المورد أولًا.");
+                var lines=new List<PurchaseReturnLineInput>();
+                foreach(DataGridViewRow row in grid.Rows)
+                {
+                    int qty=0; int.TryParse(Convert.ToString(row.Cells["ReturnQty"].Value),out qty);
+                    if(qty<=0) continue;
+                    int available=Convert.ToInt32(row.Cells["Available"].Value,CultureInfo.InvariantCulture);
+                    if(qty>available) throw new InvalidOperationException($"كمية مرتجع ({row.Cells["Product"].Value}) أكبر من المتاح ({available}).");
+                    lines.Add(new PurchaseReturnLineInput { PurchaseItemId=Convert.ToInt64(row.Cells["PurchaseItemId"].Value,CultureInfo.InvariantCulture), Quantity=qty });
+                }
+                if(lines.Count==0) throw new InvalidOperationException("اكتب كمية مرتجع لصنف واحد على الأقل.");
+                var confirm=MessageBox.Show(dialog,"سيتم خصم الكميات من المخزون. ستُخصم قيمة المرتجع من مديونية المورد أولًا، وأي فائض سيُحفظ رصيدًا دائنًا لك عند المورد لا يدخل الخزنة. هل تريد المتابعة؟","تأكيد مرتجع المشتريات",MessageBoxButtons.YesNo,MessageBoxIcon.Warning);
+                if(confirm!=DialogResult.Yes)return;
+                var result=BusinessManagementStore.RecordPurchaseReturn(currentUser,selected.Id,lines,reason.Text);
+                LoadSuppliers(); LoadPurchaseArchive(); LoadStockHistory();
+                MessageBox.Show(dialog,$"تم تسجيل مرتجع المورد رقم {result.ReturnId}.\nإجمالي المرتجع: {result.Total:N2} ج.م\nالمخصوم من مديونية فواتير المورد: {result.SupplierCredit:N2} ج.م\nرصيد دائن جديد لك عند المورد: {result.SupplierCreditBalance:N2} ج.م\nالمبلغ الداخل للخزنة: {result.CashRefund:N2} ج.م","تم",MessageBoxButtons.OK,MessageBoxIcon.Information);
+                dialog.Close();
+            }
+            catch(Exception ex){AppLog.Error("تعذر تسجيل مرتجع مشتريات للمورد",ex);MessageBox.Show(dialog,ex.Message,"مرتجع المورد",MessageBoxButtons.OK,MessageBoxIcon.Error);}
+        };
+        dialog.KeyDown += (_,e)=>{
+            if(e.Control && e.KeyCode==Keys.Enter){e.Handled=true;e.SuppressKeyPress=true;save.PerformClick();}
+        };
+        if(supplier.Items.Count>0)supplier.SelectedIndex=0;
+        LoadInvoiceChoices(); LoadRows();
+        dialog.ShowDialog(this);
+    }
+
+
+    private void ShowPurchaseReturnArchive()
+    {
+        using var form=new Form { Text="أرشيف مرتجعات المشتريات للموردين",StartPosition=FormStartPosition.CenterParent,
+            Size=new Size(1100,650),MinimumSize=new Size(900,520),RightToLeft=RightToLeft.Yes,RightToLeftLayout=true,
+            Font=new Font("Segoe UI",10F),BackColor=Color.White };
+        EnableEscapeClose(form);
+        var grid=new DataGridView { Dock=DockStyle.Fill,AllowUserToAddRows=false,ReadOnly=true,SelectionMode=DataGridViewSelectionMode.FullRowSelect,
+            MultiSelect=false,AutoSizeColumnsMode=DataGridViewAutoSizeColumnsMode.Fill };
+        StyleBusinessGrid(grid);
+        grid.Columns.Add(new DataGridViewTextBoxColumn {Name="Id",Visible=false});
+        grid.Columns.Add(UiKit.GridText("Return","رقم المرتجع",90));
+        grid.Columns.Add(UiKit.GridText("Date","التاريخ",140));
+        grid.Columns.Add(UiKit.GridText("Supplier","المورد",170));
+        grid.Columns.Add(UiKit.GridText("Products","الأصناف والكميات",300));
+        grid.Columns.Add(UiKit.GridText("Total","قيمة المرتجع",120));
+        grid.Columns.Add(UiKit.GridText("Cash","المستلم نقدًا",120));
+        grid.Columns.Add(UiKit.GridText("Reason","السبب",180));
+        foreach(var r in BusinessManagementStore.LoadPurchaseReturnArchive())
+            grid.Rows.Add(r.Id,r.Id,r.CreatedAt.ToString("yyyy-MM-dd HH:mm"),r.SupplierName,r.Products,r.Total.ToString("N2"),r.CashRefund.ToString("N2"),r.Reason);
+        grid.CellDoubleClick+=(_,e)=>{
+            if(e.RowIndex<0)return;
+            var row=BusinessManagementStore.LoadPurchaseReturnArchive().FirstOrDefault(x=>x.Id==Convert.ToInt64(grid.Rows[e.RowIndex].Cells["Id"].Value,CultureInfo.InvariantCulture));
+            if(row==null)return;
+            ShowArchiveText($"تفاصيل مرتجع المورد رقم {row.Id}",
+                $"رقم المرتجع: {row.Id}\nالمورد: {row.SupplierName}\nالتاريخ: {row.CreatedAt:yyyy-MM-dd HH:mm}\nالأصناف والكميات: {row.Products}\nإجمالي قيمة المرتجع: {row.Total:N2} ج.م\nالمستلم نقدًا من المورد: {row.CashRefund:N2} ج.م\nالمخصوم من مديونية المورد/الرصيد الدائن: {row.Total-row.CashRefund:N2} ج.م\nالسبب: {row.Reason}");
+        };
+        var close=UiKit.Button("إغلاق",Color.FromArgb(108,117,125),100,40);
+        close.Dock=DockStyle.Bottom;close.Click+=(_,_)=>form.Close();
+        form.Controls.Add(grid);form.Controls.Add(close);form.ShowDialog(this);
+    }
+
+    private static void EnableEscapeClose(Form form)
+    {
+        form.KeyPreview = true;
+        form.KeyDown += (_, e) =>
+        {
+            if (e.KeyCode != Keys.Escape) return;
+            e.Handled = true; e.SuppressKeyPress = true;
+            form.Close();
+        };
+    }
+
     private TabPage BuildReturnsTab()
     {
         var page = NewTab("↩️ المرتجعات");
-        var root = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3, Padding = new Padding(8) };
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 62)); root.RowStyles.Add(new RowStyle(SizeType.Percent, 100)); root.RowStyles.Add(new RowStyle(SizeType.Absolute, 76));
+        var sections = new TabControl { Dock = DockStyle.Fill, RightToLeft = RightToLeft.Yes, RightToLeftLayout = true, Font = new Font("Segoe UI", 10F, FontStyle.Bold) };
+
+        // مرتجعات المبيعات — نفس الشاشة الحالية دون تغيير منطقها.
+        var salesPage = new TabPage("مرتجعات المبيعات") { BackColor = UiKit.Background, Padding = new Padding(8) };
+        var salesRoot = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3, Padding = new Padding(8) };
+        salesRoot.RowStyles.Add(new RowStyle(SizeType.Absolute, 62));
+        salesRoot.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        salesRoot.RowStyles.Add(new RowStyle(SizeType.Absolute, 76));
         var bar = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, WrapContents = false };
         returnSearch.Width = 270; returnSearch.PlaceholderText = "بحث باسم الصنف";
         var find = UiKit.Button("🔎 تحديث النتائج", UiKit.Primary, 140, 40); find.Click += (_, _) => LoadReturnRows();
-        bar.Controls.Add(returnSearch); bar.Controls.Add(find); bar.Controls.Add(MakeHint("تظهر المبيعات النقدية أو المبيعات التي أصبح رصيد حساب عميلها صفرًا؛ لا يمكن رد بيع آجل مع وجود دين قائم على الحساب.")); root.Controls.Add(bar, 0, 0);
+        var diagnose = UiKit.Button("🩺 تشخيص المرتجعات", Color.FromArgb(75, 85, 99), 155, 40); diagnose.Click += (_, _) => RunReturnDiagnostics();
+        bar.Controls.Add(returnSearch); bar.Controls.Add(find); bar.Controls.Add(diagnose);
+        bar.Controls.Add(MakeHint("مرتجعات البيع النقدي والآجل؛ تخصم قيمة المرتجع من دين العميل أولًا، ويُرد الفائض نقدًا."));
+        salesRoot.Controls.Add(bar, 0, 0);
         StyleBusinessGrid(returnGrid);
         returnGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Id", Visible = false });
         returnGrid.Columns.Add(UiKit.GridText("Date", "تاريخ البيع", 150));
@@ -201,13 +485,70 @@ internal sealed class BusinessManagementForm : Form
         returnGrid.Columns.Add(UiKit.GridText("Amount", "قيمة الفاتورة", 135));
         returnGrid.Columns.Add(UiKit.GridText("Tx", "رقم العملية", 100));
         returnGrid.SelectionChanged += (_, _) => UpdateReturnQuantityLimit();
-        root.Controls.Add(returnGrid, 0, 1);
+        salesRoot.Controls.Add(returnGrid, 0, 1);
         var footer = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, WrapContents = false, Padding = new Padding(3) };
         returnQty.Minimum = 1; returnQty.Maximum = 100000; returnQty.Value = 1; returnQty.DecimalPlaces = 0; returnQty.Width = 90;
         returnReason.Width = 260; returnReason.PlaceholderText = "سبب المرتجع (إجباري)";
         var save = UiKit.Button("تأكيد المرتجع ورد المبلغ", UiKit.Danger, 210, 42); save.Click += (_, _) => ProcessReturn();
-        footer.Controls.Add(LabeledControl("الكمية المرتجعة", returnQty, 115)); footer.Controls.Add(LabeledControl("السبب", returnReason, 270)); footer.Controls.Add(save);
-        root.Controls.Add(footer, 0, 2); page.Controls.Add(root); return page;
+        footer.Controls.Add(LabeledControl("الكمية المرتجعة", returnQty, 115));
+        footer.Controls.Add(LabeledControl("السبب", returnReason, 270));
+        footer.Controls.Add(save);
+        salesRoot.Controls.Add(footer, 0, 2);
+        salesPage.Controls.Add(salesRoot);
+
+        // مرتجعات المشتريات — منفصلة تمامًا عن مرتجعات البيع.
+        var purchasesPage = new TabPage("مرتجعات المشتريات") { BackColor = UiKit.Background, Padding = new Padding(10) };
+        var purchaseRoot = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3, Padding = new Padding(8) };
+        purchaseRoot.RowStyles.Add(new RowStyle(SizeType.Absolute, 66));
+        purchaseRoot.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        purchaseRoot.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
+        var purchaseBar = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, WrapContents = false };
+        // Create the archive grid before wiring callbacks so every captured reference is initialized.
+        var purchaseReturnGrid = new DataGridView { Name = "purchaseReturnArchiveGrid", Dock = DockStyle.Fill, AllowUserToAddRows = false, ReadOnly = true, MultiSelect = false, SelectionMode = DataGridViewSelectionMode.FullRowSelect, AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill };
+        var newPurchaseReturn = UiKit.Button("＋ إنشاء مرتجع مشتريات", UiKit.Danger, 205, 42);
+        newPurchaseReturn.Click += (_, _) => { ShowPurchaseReturnDialog(); LoadPurchaseReturnArchiveGrid(); };
+        var refreshPurchaseReturns = UiKit.Button("⟳ تحديث الأرشيف", UiKit.Primary, 150, 42);
+        var archiveHint = MakeHint("اختر فاتورة مورد واحدة أو كل فواتير المورد، ثم حدد الأصناف والكميات. تُخصم قيمة المرتجع من حساب المورد أولًا.");
+        refreshPurchaseReturns.Click += (_, _) => LoadPurchaseReturnArchiveGrid();
+        purchaseBar.Controls.Add(newPurchaseReturn);
+        purchaseBar.Controls.Add(refreshPurchaseReturns);
+        purchaseBar.Controls.Add(archiveHint);
+        purchaseRoot.Controls.Add(purchaseBar, 0, 0);
+
+        StyleBusinessGrid(purchaseReturnGrid);
+        purchaseReturnGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Id", Visible = false });
+        purchaseReturnGrid.Columns.Add(UiKit.GridText("Return", "رقم المرتجع", 90));
+        purchaseReturnGrid.Columns.Add(UiKit.GridText("Date", "التاريخ", 140));
+        purchaseReturnGrid.Columns.Add(UiKit.GridText("Supplier", "المورد", 150));
+        purchaseReturnGrid.Columns.Add(UiKit.GridText("Products", "الأصناف والكميات", 300));
+        purchaseReturnGrid.Columns.Add(UiKit.GridText("Total", "قيمة المرتجع", 110));
+        purchaseReturnGrid.Columns.Add(UiKit.GridText("Cash", "المسترد نقدًا", 110));
+        purchaseReturnGrid.Columns.Add(UiKit.GridText("Reason", "ملاحظات", 150));
+        purchaseReturnGrid.CellDoubleClick += (_, e) =>
+        {
+            if (e.RowIndex < 0) return;
+            long id = Convert.ToInt64(purchaseReturnGrid.Rows[e.RowIndex].Cells["Id"].Value, CultureInfo.InvariantCulture);
+            var row = BusinessManagementStore.LoadPurchaseReturnArchive().FirstOrDefault(x => x.Id == id);
+            if (row == null) return;
+            ShowArchiveText($"تفاصيل مرتجع مشتريات رقم {row.Id}",
+                $"رقم المرتجع: {row.Id}\nالمورد: {row.SupplierName}\nالتاريخ: {row.CreatedAt:yyyy-MM-dd HH:mm}\nالأصناف والكميات: {row.Products}\nإجمالي المرتجع: {row.Total:N2} ج.م\nالمسترد نقدًا: {row.CashRefund:N2} ج.م\nالمخصوم من حساب المورد: {row.Total-row.CashRefund:N2} ج.م\nالسبب: {row.Reason}");
+        };
+        purchaseRoot.Controls.Add(purchaseReturnGrid, 0, 1);
+        purchaseRoot.Controls.Add(MakeHint("دبل كليك على أي مرتجع لعرض تفاصيله."), 0, 2);
+        purchasesPage.Controls.Add(purchaseRoot);
+
+        void LoadPurchaseReturnArchiveGrid()
+        {
+            purchaseReturnGrid.Rows.Clear();
+            foreach (var r in BusinessManagementStore.LoadPurchaseReturnArchive())
+                purchaseReturnGrid.Rows.Add(r.Id, r.Id, r.CreatedAt.ToString("yyyy-MM-dd HH:mm"), r.SupplierName, r.Products, r.Total.ToString("N2"), r.CashRefund.ToString("N2"), r.Reason);
+        }
+
+        sections.TabPages.Add(salesPage);
+        sections.TabPages.Add(purchasesPage);
+        sections.SelectedIndexChanged += (_, _) => { if (sections.SelectedTab == purchasesPage) LoadPurchaseReturnArchiveGrid(); };
+        page.Controls.Add(sections);
+        return page;
     }
 
     private TabPage BuildProfitTab()
@@ -224,34 +565,52 @@ internal sealed class BusinessManagementForm : Form
         bar.Controls.Add(LabeledControl("من", profitFrom, 165)); bar.Controls.Add(LabeledControl("إلى", profitTo, 165)); bar.Controls.Add(show);
         root.Controls.Add(bar, 0, 0);
         profitSummary.Dock = DockStyle.Fill; profitSummary.BackColor = Color.White; profitSummary.ForeColor = UiKit.Text;
-        profitSummary.Padding = new Padding(18); profitSummary.Font = new Font("Segoe UI", 11F, FontStyle.Bold);
+        profitSummary.Padding = new Padding(18); profitSummary.Font = new Font("Segoe UI", 10.5F, FontStyle.Bold);
         profitSummary.TextAlign = ContentAlignment.MiddleRight;
-        profitSummary.Text = "اختر الفترة واضغط حساب النتائج.\n\nسيتم احتساب هامش مبيعات المنتجات بتكلفة الشراء المحفوظة وقت البيع، وعمولات الخدمات، والمصروفات التشغيلية المسجلة.";
+        profitSummary.Text = "اختر الفترة واضغط حساب النتائج.\n\nسيظهر هامش المبيعات بتكلفة الشراء التاريخية، والمرتجعات والعمولات والمصروفات، مع تفصيل إيرادات الطباعة حسب الفئة واللون والوجهين. تكلفة الورق والحبر غير مسجلة حاليًا، لذلك لا يتم وصف إيرادات الطباعة بأنها صافي ربح.";
         root.Controls.Add(profitSummary, 0, 1);
 
-        var detail = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, Padding = new Padding(0, 8, 0, 0) };
-        detail.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 56)); detail.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 44));
+        var detail = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 1, Padding = new Padding(0, 8, 0, 0) };
+        detail.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 42));
+        detail.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 29));
+        detail.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 29));
+
         var productsPanel = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2, Padding = new Padding(4) };
         productsPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 34)); productsPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         productsPanel.Controls.Add(MakeHint("ربحية الأصناف — بعد خصم المرتجعات"), 0, 0);
         StyleBusinessGrid(profitProductGrid);
-        profitProductGrid.Columns.Add(UiKit.GridText("Product", "الصنف", 230));
-        profitProductGrid.Columns.Add(UiKit.GridText("Revenue", "المبيعات", 100));
-        profitProductGrid.Columns.Add(UiKit.GridText("Cost", "التكلفة", 100));
-        profitProductGrid.Columns.Add(UiKit.GridText("Returns", "المرتجعات", 100));
-        profitProductGrid.Columns.Add(UiKit.GridText("Profit", "الربح", 100));
+        profitProductGrid.Columns.Add(UiKit.GridText("Product", "الصنف", 180));
+        profitProductGrid.Columns.Add(UiKit.GridText("Revenue", "المبيعات", 85));
+        profitProductGrid.Columns.Add(UiKit.GridText("Cost", "التكلفة", 85));
+        profitProductGrid.Columns.Add(UiKit.GridText("Returns", "المرتجعات", 85));
+        profitProductGrid.Columns.Add(UiKit.GridText("Profit", "الربح", 85));
         productsPanel.Controls.Add(profitProductGrid, 0, 1);
+
         var employeePanel = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2, Padding = new Padding(4) };
         employeePanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 34)); employeePanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        employeePanel.Controls.Add(MakeHint("مبيعات الأصناف حسب الموظف — الربح للعمليات ذات التكلفة المعروفة"), 0, 0);
+        employeePanel.Controls.Add(MakeHint("مبيعات الأصناف حسب الموظف"), 0, 0);
         StyleBusinessGrid(profitEmployeeGrid);
-        profitEmployeeGrid.Columns.Add(UiKit.GridText("User", "الموظف", 130));
-        profitEmployeeGrid.Columns.Add(UiKit.GridText("Sales", "المبيعات", 100));
-        profitEmployeeGrid.Columns.Add(UiKit.GridText("Profit", "هامش معروف", 110));
-        profitEmployeeGrid.Columns.Add(UiKit.GridText("Count", "العمليات", 80));
-        profitEmployeeGrid.Columns.Add(UiKit.GridText("Unknown", "بلا تكلفة", 85));
+        profitEmployeeGrid.Columns.Add(UiKit.GridText("User", "الموظف", 105));
+        profitEmployeeGrid.Columns.Add(UiKit.GridText("Sales", "المبيعات", 85));
+        profitEmployeeGrid.Columns.Add(UiKit.GridText("Profit", "هامش معروف", 95));
+        profitEmployeeGrid.Columns.Add(UiKit.GridText("Count", "العمليات", 70));
+        profitEmployeeGrid.Columns.Add(UiKit.GridText("Unknown", "بلا تكلفة", 75));
         employeePanel.Controls.Add(profitEmployeeGrid, 0, 1);
-        detail.Controls.Add(productsPanel, 0, 0); detail.Controls.Add(employeePanel, 1, 0);
+
+        var printingPanel = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2, Padding = new Padding(4) };
+        printingPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 34)); printingPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        printingPanel.Controls.Add(MakeHint("إيرادات الطباعة حسب الفئة واللون"), 0, 0);
+        StyleBusinessGrid(profitPrintingGrid);
+        profitPrintingGrid.Columns.Add(UiKit.GridText("Category", "الفئة", 90));
+        profitPrintingGrid.Columns.Add(UiKit.GridText("Color", "اللون", 75));
+        profitPrintingGrid.Columns.Add(UiKit.GridText("Duplex", "الوجهين", 85));
+        profitPrintingGrid.Columns.Add(UiKit.GridText("Jobs", "عمليات", 65));
+        profitPrintingGrid.Columns.Add(UiKit.GridText("Revenue", "الإيراد", 95));
+        printingPanel.Controls.Add(profitPrintingGrid, 0, 1);
+
+        detail.Controls.Add(productsPanel, 0, 0);
+        detail.Controls.Add(employeePanel, 1, 0);
+        detail.Controls.Add(printingPanel, 2, 0);
         root.Controls.Add(detail, 0, 2);
         page.Controls.Add(root); return page;
     }
@@ -276,14 +635,17 @@ internal sealed class BusinessManagementForm : Form
     private TabPage BuildInvoicesTab()
     {
         var page = NewTab("🧾 أرشيف الفواتير");
-        var root = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2, Padding = new Padding(10) };
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 62)); root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        var bar = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, WrapContents = false };
+        var archiveTabs = new TabControl { Dock = DockStyle.Fill, RightToLeft = RightToLeft.Yes, RightToLeftLayout = true };
+
+        var salesPage = NewTab("فواتير البيع");
+        var salesRoot = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2, Padding = new Padding(8) };
+        salesRoot.RowStyles.Add(new RowStyle(SizeType.Absolute, 58)); salesRoot.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        var salesBar = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, WrapContents = false };
         invoiceSearch.Width = 350; invoiceSearch.PlaceholderText = "رقم الفاتورة أو اسم العميل";
-        var find = UiKit.Button("بحث", UiKit.Primary, 100, 40); find.Click += (_, _) => LoadInvoiceRows();
-        var open = UiKit.Button("فتح ومعاينة الفاتورة", UiKit.Success, 180, 40); open.Click += (_, _) => OpenSelectedInvoice();
+        var salesFind = UiKit.Button("بحث", UiKit.Primary, 100, 40); salesFind.Click += (_, _) => LoadInvoiceRows();
+        var salesOpen = UiKit.Button("فتح ومعاينة الفاتورة", UiKit.Success, 180, 40); salesOpen.Click += (_, _) => OpenSelectedInvoice();
         invoiceSearch.KeyDown += (_, e) => { if (e.KeyCode == Keys.Enter) { e.SuppressKeyPress = true; LoadInvoiceRows(); } };
-        bar.Controls.Add(invoiceSearch); bar.Controls.Add(find); bar.Controls.Add(open); root.Controls.Add(bar, 0, 0);
+        salesBar.Controls.Add(invoiceSearch); salesBar.Controls.Add(salesFind); salesBar.Controls.Add(salesOpen); salesRoot.Controls.Add(salesBar, 0, 0);
         StyleBusinessGrid(invoiceGrid);
         invoiceGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Id", Visible = false });
         invoiceGrid.Columns.Add(UiKit.GridText("Number", "رقم الفاتورة", 130));
@@ -291,7 +653,55 @@ internal sealed class BusinessManagementForm : Form
         invoiceGrid.Columns.Add(UiKit.GridText("Total", "الإجمالي", 150));
         invoiceGrid.Columns.Add(UiKit.GridText("Date", "التاريخ", 210));
         invoiceGrid.CellDoubleClick += (_, e) => { if (e.RowIndex >= 0) OpenSelectedInvoice(); };
-        root.Controls.Add(invoiceGrid, 0, 1); page.Controls.Add(root); return page;
+        salesRoot.Controls.Add(invoiceGrid, 0, 1); salesPage.Controls.Add(salesRoot);
+        archiveTabs.TabPages.Add(salesPage);
+
+        var purchasesPage = NewTab("فواتير الشراء");
+        var purchasesRoot = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2, Padding = new Padding(8) };
+        purchasesRoot.RowStyles.Add(new RowStyle(SizeType.Absolute, 58)); purchasesRoot.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        var purchasesBar = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, WrapContents = false };
+        purchaseArchiveSearch.Width = 350; purchaseArchiveSearch.PlaceholderText = "رقم فاتورة الشراء أو اسم المورد";
+        var purchaseFind = UiKit.Button("بحث", UiKit.Primary, 100, 40); purchaseFind.Click += (_, _) => LoadPurchaseArchive();
+        var purchaseOpen = UiKit.Button("تفاصيل الفاتورة والدفعات", UiKit.Success, 205, 40); purchaseOpen.Click += (_, _) => OpenSelectedPurchaseArchive();
+        purchaseArchiveSearch.KeyDown += (_, e) => { if (e.KeyCode == Keys.Enter) { e.SuppressKeyPress = true; LoadPurchaseArchive(); } };
+        purchasesBar.Controls.Add(purchaseArchiveSearch); purchasesBar.Controls.Add(purchaseFind); purchasesBar.Controls.Add(purchaseOpen);
+        purchasesRoot.Controls.Add(purchasesBar, 0, 0);
+        StyleBusinessGrid(purchaseArchiveGrid);
+        purchaseArchiveGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Id", Visible = false });
+        purchaseArchiveGrid.Columns.Add(UiKit.GridText("Number", "رقم فاتورة المورد", 150));
+        purchaseArchiveGrid.Columns.Add(UiKit.GridText("Supplier", "المورد", 220));
+        purchaseArchiveGrid.Columns.Add(UiKit.GridText("Total", "الإجمالي", 120));
+        purchaseArchiveGrid.Columns.Add(UiKit.GridText("Paid", "المدفوع", 120));
+        purchaseArchiveGrid.Columns.Add(UiKit.GridText("Remaining", "المتبقي", 120));
+        purchaseArchiveGrid.Columns.Add(UiKit.GridText("Date", "التاريخ", 175));
+        purchaseArchiveGrid.CellDoubleClick += (_, e) => { if (e.RowIndex >= 0) OpenSelectedPurchaseArchive(); };
+        purchasesRoot.Controls.Add(purchaseArchiveGrid, 0, 1); purchasesPage.Controls.Add(purchasesRoot);
+        archiveTabs.TabPages.Add(purchasesPage);
+
+        var returnsPage = NewTab("فواتير المرتجعات");
+        var returnsRoot = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2, Padding = new Padding(8) };
+        returnsRoot.RowStyles.Add(new RowStyle(SizeType.Absolute, 58)); returnsRoot.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        var returnsBar = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, WrapContents = false };
+        returnArchiveSearch.Width = 350; returnArchiveSearch.PlaceholderText = "رقم المرتجع أو الصنف أو رقم البيع";
+        var returnFind = UiKit.Button("بحث", UiKit.Primary, 100, 40); returnFind.Click += (_, _) => LoadReturnArchive();
+        var returnOpen = UiKit.Button("تفاصيل فاتورة المرتجع", UiKit.Success, 190, 40); returnOpen.Click += (_, _) => OpenSelectedReturnArchive();
+        returnArchiveSearch.KeyDown += (_, e) => { if (e.KeyCode == Keys.Enter) { e.SuppressKeyPress = true; LoadReturnArchive(); } };
+        returnsBar.Controls.Add(returnArchiveSearch); returnsBar.Controls.Add(returnFind); returnsBar.Controls.Add(returnOpen);
+        returnsRoot.Controls.Add(returnsBar, 0, 0);
+        StyleBusinessGrid(returnArchiveGrid);
+        returnArchiveGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Id", Visible = false });
+        returnArchiveGrid.Columns.Add(UiKit.GridText("Number", "رقم المرتجع", 120));
+        returnArchiveGrid.Columns.Add(UiKit.GridText("Original", "رقم عملية البيع", 150));
+        returnArchiveGrid.Columns.Add(UiKit.GridText("Products", "الأصناف والكميات", 290));
+        returnArchiveGrid.Columns.Add(UiKit.GridText("Refund", "المبلغ المردود", 130));
+        returnArchiveGrid.Columns.Add(UiKit.GridText("Reason", "السبب", 180));
+        returnArchiveGrid.Columns.Add(UiKit.GridText("Date", "التاريخ", 175));
+        returnArchiveGrid.CellDoubleClick += (_, e) => { if (e.RowIndex >= 0) OpenSelectedReturnArchive(); };
+        returnsRoot.Controls.Add(returnArchiveGrid, 0, 1); returnsPage.Controls.Add(returnsRoot);
+        archiveTabs.TabPages.Add(returnsPage);
+
+        page.Controls.Add(archiveTabs);
+        return page;
     }
 
     private TabPage BuildInventoryIoTab()
@@ -387,7 +797,13 @@ internal sealed class BusinessManagementForm : Form
         {
             var suppliers = BusinessManagementStore.LoadSuppliers();
             supplierGrid.Rows.Clear();
-            foreach (var s in suppliers) supplierGrid.Rows.Add(s.Id, s.Name, s.Phone, s.Balance.ToString("N2") + " ج.م");
+            foreach (var s in suppliers)
+            {
+                int rowIndex = supplierGrid.Rows.Add(s.Id, s.Name, s.Phone, s.Balance.ToString("N2") + " ج.م");
+                supplierGrid.Rows[rowIndex].Cells["Balance"].ToolTipText = s.Balance < 0
+                    ? $"رصيد دائن لنا عند المورد: {Math.Abs(s.Balance):N2} ج.م"
+                    : $"المتبقي المستحق للمورد: {s.Balance:N2} ج.م";
+            }
             long? selected = purchaseSupplier.SelectedItem is SupplierLookupRow old ? old.Id : null;
             purchaseSupplier.Items.Clear();
             foreach (var s in suppliers) purchaseSupplier.Items.Add(s);
@@ -420,7 +836,10 @@ FROM Purchases WHERE SupplierId=$s ORDER BY CreatedAt DESC,Id DESC LIMIT 300";
             while (r.Read())
             {
                 DateTime date = DateTime.TryParse(r.GetString(1), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var d) ? d : DateTime.MinValue;
-                supplierPurchaseGrid.Rows.Add(r.GetInt64(0), date.ToString("yyyy-MM-dd HH:mm"), r.GetString(2),
+                long purchaseId = r.GetInt64(0);
+                string invoiceNumber = r.GetString(2);
+                supplierPurchaseGrid.Rows.Add(purchaseId, date.ToString("yyyy-MM-dd HH:mm"),
+                    string.IsNullOrWhiteSpace(invoiceNumber) ? "#" + purchaseId.ToString(CultureInfo.InvariantCulture) : invoiceNumber,
                     Dec(r.GetValue(3)).ToString("N2"), Dec(r.GetValue(4)).ToString("N2"), Dec(r.GetValue(5)).ToString("N2"));
             }
         }
@@ -447,8 +866,230 @@ FROM Purchases WHERE SupplierId=$s ORDER BY CreatedAt DESC,Id DESC LIMIT 300";
         if (balance <= 0) { MessageBox.Show(this, "لا يوجد رصيد مستحق لهذا المورد.", "سداد مورد", MessageBoxButtons.OK, MessageBoxIcon.Information); return; }
         using var dialog = new AmountNoteDialog($"سداد حساب {name}", balance);
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
-        try { BusinessManagementStore.PaySupplier(currentUser, id, dialog.Amount, dialog.Note); LoadSuppliers(); MessageBox.Show(this, "تم تسجيل السداد وتحديث رصيد المورد.", "تم", MessageBoxButtons.OK, MessageBoxIcon.Information); }
+        try { BusinessManagementStore.PaySupplier(currentUser, id, dialog.Amount, dialog.Note); LoadSuppliers(); LoadPurchaseArchive(); MessageBox.Show(this, "تم تسجيل السداد وتحديث رصيد المورد.", "تم", MessageBoxButtons.OK, MessageBoxIcon.Information); }
         catch (Exception ex) { MessageBox.Show(this, ex.Message, "سداد مورد", MessageBoxButtons.OK, MessageBoxIcon.Error); }
+    }
+
+
+    private void LoadSupplierPayments()
+    {
+        if (supplierPaymentGrid.Columns.Count == 0) return;
+        supplierPaymentGrid.Rows.Clear();
+        if (supplierGrid.CurrentRow == null) return;
+        try
+        {
+            long supplierId = Convert.ToInt64(supplierGrid.CurrentRow.Cells["Id"].Value, CultureInfo.InvariantCulture);
+            foreach (var payment in BusinessManagementStore.LoadSupplierPaymentHistory(supplierId))
+                supplierPaymentGrid.Rows.Add(payment.Id, payment.PurchaseId,
+                    payment.CreatedAt.ToString("yyyy-MM-dd HH:mm"),
+                    string.IsNullOrWhiteSpace(payment.InvoiceNumber) ? "#" + payment.PurchaseId.ToString(CultureInfo.InvariantCulture) : payment.InvoiceNumber,
+                    payment.Amount.ToString("N2"), payment.Note, payment.UserName);
+        }
+        catch (Exception ex) { AppLog.Error("تعذر تحميل دفعات المورد", ex); }
+    }
+
+    private void ShowSelectedSupplierDetails()
+    {
+        if (supplierGrid.CurrentRow == null) return;
+        long supplierId = Convert.ToInt64(supplierGrid.CurrentRow.Cells["Id"].Value, CultureInfo.InvariantCulture);
+        var details = BusinessManagementStore.LoadSupplierDetails(supplierId);
+        if (details == null) { MessageBox.Show(this, "المورد غير موجود.", "تفاصيل المورد", MessageBoxButtons.OK, MessageBoxIcon.Warning); return; }
+
+        using var dialog = new Form
+        {
+            Text = "تفاصيل المورد والدفعات", StartPosition = FormStartPosition.CenterParent,
+            Size = new Size(860, 650), MinimumSize = new Size(760, 560),
+            RightToLeft = RightToLeft.Yes, RightToLeftLayout = true,
+            Font = new Font("Segoe UI", 10F), BackColor = Color.White
+        };
+        EnableEscapeClose(dialog);
+        var root = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 4, Padding = new Padding(14) };
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 150));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 46));
+        root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 52));
+        var fields = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 4, RowCount = 2 };
+        fields.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 95)); fields.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        fields.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 85)); fields.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        fields.RowStyles.Add(new RowStyle(SizeType.Absolute, 48)); fields.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
+        TextBox name = new() { Dock = DockStyle.Fill, Text = details.Name, ReadOnly = true };
+        TextBox phone = new() { Dock = DockStyle.Fill, Text = details.Phone, ReadOnly = true };
+        TextBox address = new() { Dock = DockStyle.Fill, Text = details.Address, ReadOnly = true };
+        LabelField(fields, "اسم المورد", name, 0, 0); LabelField(fields, "الهاتف", phone, 2, 0);
+        LabelField(fields, "العنوان", address, 0, 1);
+        var balance = new Label { Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleCenter, Font = new Font("Segoe UI", 11F, FontStyle.Bold), ForeColor = details.Balance < 0 ? Color.FromArgb(0, 105, 92) : Color.FromArgb(0, 121, 107), Text = details.Balance < 0 ? $"رصيد دائن لنا عند المورد: {Math.Abs(details.Balance):N2} ج.م" : $"المتبقي المستحق للمورد: {details.Balance:N2} ج.م" };
+        fields.Controls.Add(balance, 2, 1); fields.SetColumnSpan(balance, 2);
+        root.Controls.Add(fields, 0, 0);
+        root.Controls.Add(MakeHint("سجل دفعات المورد — دبل كليك على الدفعة لفتح فاتورة الشراء المرتبطة بها"), 0, 1);
+
+        var payments = new DataGridView { Dock = DockStyle.Fill, ReadOnly = true, AllowUserToAddRows = false, RowHeadersVisible = false, AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill, SelectionMode = DataGridViewSelectionMode.FullRowSelect, MultiSelect = false };
+        StyleBusinessGrid(payments);
+        payments.Columns.Add(new DataGridViewTextBoxColumn { Name = "Id", Visible = false });
+        payments.Columns.Add(new DataGridViewTextBoxColumn { Name = "PurchaseId", Visible = false });
+        payments.Columns.Add(UiKit.GridText("Date", "التاريخ", 160));
+        payments.Columns.Add(UiKit.GridText("Invoice", "رقم الفاتورة", 130));
+        payments.Columns.Add(UiKit.GridText("Amount", "المبلغ", 120));
+        payments.Columns.Add(UiKit.GridText("Note", "البيان", 220));
+        payments.Columns.Add(UiKit.GridText("User", "المستخدم", 120));
+        foreach (var p in BusinessManagementStore.LoadSupplierPaymentHistory(supplierId))
+            payments.Rows.Add(p.Id, p.PurchaseId, p.CreatedAt.ToString("yyyy-MM-dd HH:mm"),
+                string.IsNullOrWhiteSpace(p.InvoiceNumber) ? "#" + p.PurchaseId.ToString(CultureInfo.InvariantCulture) : p.InvoiceNumber,
+                p.Amount.ToString("N2"), p.Note, p.UserName);
+        payments.CellDoubleClick += (_, e) =>
+        {
+            if (e.RowIndex < 0) return;
+            long purchaseId = Convert.ToInt64(payments.Rows[e.RowIndex].Cells["PurchaseId"].Value, CultureInfo.InvariantCulture);
+            ShowPurchaseInvoiceDetails(purchaseId);
+        };
+        root.Controls.Add(payments, 0, 2);
+
+        var buttons = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, WrapContents = false };
+        var edit = UiKit.Button("🔐 تعديل بيانات المورد", Color.FromArgb(111, 66, 193), 190, 40);
+        var save = UiKit.Button("💾 حفظ التعديل", UiKit.Success, 145, 40); save.Visible = false;
+        var close = UiKit.Button("إغلاق", Color.FromArgb(108, 117, 125), 100, 40);
+        edit.Click += (_, _) =>
+        {
+            using var password = new AdminPasswordPromptForm();
+            if (password.ShowDialog(dialog) != DialogResult.OK) return;
+            if (!AdminSecurity.ValidateAdminPassword(password.Password))
+            {
+                MessageBox.Show(dialog, "كلمة مرور الإدارة غير صحيحة. لم يتم فتح التعديل.", "رفض التعديل", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            if (!AdminPasswordRotation.EnsureRotatedIfDefault(dialog))
+                return;
+            name.ReadOnly = false; phone.ReadOnly = false; address.ReadOnly = false;
+            save.Visible = true; edit.Enabled = false; name.Focus();
+        };
+        save.Click += (_, _) =>
+        {
+            try
+            {
+                BusinessManagementStore.UpdateSupplier(currentUser, supplierId, name.Text, phone.Text, address.Text);
+                name.ReadOnly = true; phone.ReadOnly = true; address.ReadOnly = true;
+                save.Visible = false; edit.Enabled = true;
+                LoadSuppliers(); LoadSupplierPurchaseHistory(); LoadSupplierPayments();
+                MessageBox.Show(dialog, "تم تحديث بيانات المورد وتسجيل التعديل في سجل المراجعة.", "تم الحفظ", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            catch (Exception ex) { MessageBox.Show(dialog, ex.Message, "تعديل المورد", MessageBoxButtons.OK, MessageBoxIcon.Error); }
+        };
+        close.Click += (_, _) => dialog.Close();
+        buttons.Controls.Add(close); buttons.Controls.Add(save); buttons.Controls.Add(edit);
+        root.Controls.Add(buttons, 0, 3);
+        dialog.Controls.Add(root);
+        dialog.ShowDialog(this);
+    }
+
+    private static void LabelField(TableLayoutPanel host, string label, Control input, int column, int row)
+    {
+        var caption = new Label { Text = label, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleRight, Font = new Font("Segoe UI", 9.5F, FontStyle.Bold) };
+        host.Controls.Add(caption, column, row);
+        host.Controls.Add(input, column + 1, row);
+    }
+
+    private void ShowPurchaseInvoiceDetailsFromGrid(DataGridView grid)
+    {
+        if (grid.CurrentRow == null) return;
+        string idColumn = grid.Columns.Contains("PurchaseId") ? "PurchaseId" : "Id";
+        object? value = grid.CurrentRow.Cells[idColumn].Value;
+        if (value == null) return;
+        ShowPurchaseInvoiceDetails(Convert.ToInt64(value, CultureInfo.InvariantCulture));
+    }
+
+    private void ShowPurchaseInvoiceDetails(long purchaseId)
+    {
+        var header = BusinessManagementStore.LoadPurchaseInvoiceHeader(purchaseId);
+        if (header == null) { MessageBox.Show(this, "فاتورة الشراء غير موجودة.", "أرشيف المشتريات", MessageBoxButtons.OK, MessageBoxIcon.Warning); return; }
+        var sb = new StringBuilder();
+        sb.AppendLine($"فاتورة شراء رقم: {header.InvoiceNumber} (سجل #{header.Id})");
+        sb.AppendLine($"المورد: {header.SupplierName}");
+        sb.AppendLine($"التاريخ: {header.CreatedAt:yyyy-MM-dd HH:mm}");
+        sb.AppendLine($"المستخدم: {header.UserName}");
+        sb.AppendLine($"الإجمالي: {header.Total:N2} ج.م | المدفوع: {header.Paid:N2} ج.م | المتبقي: {header.Remaining:N2} ج.م");
+        if (!string.IsNullOrWhiteSpace(header.Notes)) sb.AppendLine($"ملاحظات: {header.Notes}");
+        sb.AppendLine("\nالأصناف:");
+        foreach (var item in BusinessManagementStore.LoadPurchaseInvoiceItems(purchaseId))
+            sb.AppendLine($"• {item.ProductName} | {item.Quantity} × {item.UnitCost:N2} = {item.Total:N2} ج.م");
+        sb.AppendLine("\nالدفعات المسجلة:");
+        var payments = BusinessManagementStore.LoadPurchaseInvoicePayments(purchaseId);
+        if (payments.Count == 0) sb.AppendLine("لا توجد دفعات مسجلة.");
+        foreach (var payment in payments)
+            sb.AppendLine($"• {payment.CreatedAt:yyyy-MM-dd HH:mm} | {payment.Amount:N2} ج.م | {payment.Note} | {payment.UserName}");
+        ShowArchiveText("تفاصيل فاتورة الشراء", sb.ToString());
+    }
+
+    private void ShowArchiveText(string title, string content)
+    {
+        using var form = new Form
+        {
+            Text = title, StartPosition = FormStartPosition.CenterParent, Size = new Size(1040, 760),
+            MinimumSize = new Size(820, 600), RightToLeft = RightToLeft.Yes, RightToLeftLayout = true,
+            Font = new Font("Segoe UI", 11F), BackColor = Color.FromArgb(245, 247, 250)
+        };
+        EnableEscapeClose(form);
+        var root = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2, Padding = new Padding(14) };
+        root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 56));
+        var bodyHost = new Panel { Dock = DockStyle.Fill, BackColor = Color.White, Padding = new Padding(18), BorderStyle = BorderStyle.FixedSingle };
+        var body = new RichTextBox
+        {
+            Dock = DockStyle.Fill, ReadOnly = true, BorderStyle = BorderStyle.None,
+            DetectUrls = false, WordWrap = true, ScrollBars = RichTextBoxScrollBars.Vertical,
+            Text = content, Font = new Font("Segoe UI", 12F), RightToLeft = RightToLeft.Yes,
+            BackColor = Color.White, ForeColor = Color.FromArgb(40, 50, 62), ZoomFactor = 1.0f
+        };
+        bodyHost.Controls.Add(body);
+        root.Controls.Add(bodyHost, 0, 0);
+        var footer = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight, WrapContents = false, Padding = new Padding(0, 8, 0, 0) };
+        var close = UiKit.Button("إغلاق  (Esc)", Color.FromArgb(52, 73, 94), 140, 42);
+        close.Click += (_, _) => form.Close();
+        footer.Controls.Add(close);
+        root.Controls.Add(footer, 0, 1);
+        form.Controls.Add(root);
+        form.ShowDialog(this);
+    }
+
+    private void LoadPurchaseArchive()
+    {
+        purchaseArchiveGrid.Rows.Clear();
+        foreach (var p in BusinessManagementStore.LoadPurchaseArchiveRows(purchaseArchiveSearch.Text))
+            purchaseArchiveGrid.Rows.Add(p.Id,
+                string.IsNullOrWhiteSpace(p.InvoiceNumber) ? "#" + p.Id.ToString(CultureInfo.InvariantCulture) : p.InvoiceNumber,
+                p.SupplierName, p.Total.ToString("N2"), p.Paid.ToString("N2"), p.Remaining.ToString("N2"), p.CreatedAt.ToString("yyyy-MM-dd HH:mm"));
+    }
+
+    private void OpenSelectedPurchaseArchive()
+    {
+        if (purchaseArchiveGrid.CurrentRow == null) return;
+        long id = Convert.ToInt64(purchaseArchiveGrid.CurrentRow.Cells["Id"].Value, CultureInfo.InvariantCulture);
+        ShowPurchaseInvoiceDetails(id);
+    }
+
+    private void LoadReturnArchive()
+    {
+        returnArchiveGrid.Rows.Clear();
+        foreach (var r in BusinessManagementStore.LoadSalesReturnArchiveRows(returnArchiveSearch.Text))
+            returnArchiveGrid.Rows.Add(r.Id, r.Id, r.OriginalTransactions, r.Products, r.RefundAmount.ToString("N2"), r.Reason, r.CreatedAt.ToString("yyyy-MM-dd HH:mm"));
+    }
+
+    private void OpenSelectedReturnArchive()
+    {
+        if (returnArchiveGrid.CurrentRow == null) return;
+        long id = Convert.ToInt64(returnArchiveGrid.CurrentRow.Cells["Id"].Value, CultureInfo.InvariantCulture);
+        var header = BusinessManagementStore.LoadSalesReturnHeader(id);
+        if (header == null) return;
+        var sb = new StringBuilder();
+        sb.AppendLine($"فاتورة مرتجع رقم: {header.Id}");
+        sb.AppendLine($"تاريخ المرتجع: {header.CreatedAt:yyyy-MM-dd HH:mm}");
+        sb.AppendLine($"العميل: {header.CustomerName}");
+        sb.AppendLine($"رقم عملية البيع الأصلية: {header.OriginalTransactions}");
+        sb.AppendLine($"المبلغ المردود: {header.RefundAmount:N2} ج.م");
+        sb.AppendLine($"السبب: {header.Reason}");
+        sb.AppendLine($"المستخدم: {header.UserName}");
+        sb.AppendLine("\nالأصناف والكميات:");
+        foreach (var item in BusinessManagementStore.LoadSalesReturnItems(id))
+            sb.AppendLine($"• {item.ProductName} | الكمية: {item.Quantity} | المبلغ: {item.RefundAmount:N2} ج.م | تكلفة مرتجعة: {(item.ReturnedCost.HasValue ? item.ReturnedCost.Value.ToString("N2") : "غير معروفة")}");
+        ShowArchiveText("تفاصيل فاتورة المرتجع", sb.ToString());
     }
 
     private void LoadPurchaseProducts(string query)
@@ -498,12 +1139,28 @@ FROM Purchases WHERE SupplierId=$s ORDER BY CreatedAt DESC,Id DESC LIMIT 300";
         if (purchaseSupplier.SelectedItem is not SupplierLookupRow supplier) { MessageBox.Show(this, "أضف موردًا واختره أولًا.", "فاتورة شراء", MessageBoxButtons.OK, MessageBoxIcon.Warning); return; }
         try
         {
-            decimal total = purchaseLines.Sum(x => x.Quantity * x.UnitCost);
+            decimal total = Math.Round(purchaseLines.Sum(x => x.Quantity * x.UnitCost), 2, MidpointRounding.AwayFromZero);
+            if (purchaseLines.Count == 0) throw new InvalidOperationException("أضف صنفًا واحدًا على الأقل قبل حفظ الفاتورة.");
             if (purchasePaid.Value > total) throw new InvalidOperationException("المدفوع أكبر من إجمالي فاتورة الشراء.");
+            if (purchasePaid.Value + 0.005m < total)
+            {
+                decimal difference = total - purchasePaid.Value;
+                var decision = MessageBox.Show(this,
+                    $"إجمالي فاتورة الشراء: {total:N2} ج.م\nالمدفوع: {purchasePaid.Value:N2} ج.م\nالفرق: {difference:N2} ج.م\n\nنعم = الفرق دين مستحق للمورد وسجّل الفاتورة.\nلا = يوجد خطأ محتمل في الأصناف أو الأسعار؛ ارجع لمراجعة الفاتورة.\nإلغاء = عدم الحفظ الآن.",
+                    "مراجعة إجمالي فاتورة الشراء", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Warning);
+                if (decision == DialogResult.Cancel) return;
+                if (decision == DialogResult.No)
+                {
+                    tabs.SelectedIndex = 1;
+                    purchaseGrid.Focus();
+                    MessageBox.Show(this, "لم يتم تسجيل الفاتورة. راجع الأصناف والكميات والأسعار ثم أعد حساب الإجمالي.", "مراجعة الفاتورة", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
+                }
+            }
             long id = BusinessManagementStore.CreatePurchase(currentUser, supplier.Id, purchaseNumber.Text, purchaseNotes.Text, purchasePaid.Value,
                 purchaseLines.Select(x => new PurchaseLineInput { ProductId = x.ProductId, Quantity = x.Quantity, UnitCost = x.UnitCost }).ToList());
             MessageBox.Show(this, $"تم حفظ فاتورة الشراء رقم {id}.\nتم تحديث كميات المخزن ومتوسط تكلفة الشراء تلقائيًا.", "تم حفظ المشتريات", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            ClearPurchase(); LoadSuppliers(); LoadPurchaseProducts(purchaseProductSearch.Text);
+            ClearPurchase(); LoadSuppliers(); LoadPurchaseProducts(purchaseProductSearch.Text); LoadPurchaseArchive();
         }
         catch (Exception ex) { AppLog.Error("تعذر حفظ فاتورة شراء", ex); MessageBox.Show(this, ex.Message, "فاتورة شراء", MessageBoxButtons.OK, MessageBoxIcon.Error); }
     }
@@ -537,6 +1194,105 @@ FROM Purchases WHERE SupplierId=$s ORDER BY CreatedAt DESC,Id DESC LIMIT 300";
         returnQty.Maximum = limit;
     }
 
+
+    private void RunReturnDiagnostics()
+    {
+        try
+        {
+            using var c = AppDatabase.OpenConnection();
+            long Scalar(string sql)
+            {
+                using var cmd = c.CreateCommand();
+                cmd.CommandText = sql;
+                return Convert.ToInt64(cmd.ExecuteScalar() ?? 0, CultureInfo.InvariantCulture);
+            }
+            bool HasTable(string name)
+            {
+                using var cmd = c.CreateCommand();
+                cmd.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=$name";
+                cmd.Parameters.AddWithValue("$name", name);
+                return Convert.ToInt64(cmd.ExecuteScalar() ?? 0, CultureInfo.InvariantCulture) > 0;
+            }
+
+            bool returnsTable = HasTable("SalesReturns");
+            bool itemsTable = HasTable("SalesReturnItems");
+            bool inventoryTable = HasTable("InventoryMovements");
+            bool treasuryTable = HasTable("TreasuryMovements");
+            long saleLines = Scalar("SELECT COUNT(*) FROM Transactions WHERE TransactionType='SALE' AND ProductId IS NOT NULL");
+            long creditSales = Scalar(@"SELECT COUNT(*) FROM Transactions
+WHERE TransactionType='SALE' AND ProductId IS NOT NULL AND COALESCE(RemainingAmount,0)>0.005");
+            long openShift;
+            using (var shift = c.CreateCommand())
+            {
+                shift.CommandText = @"SELECT COUNT(*) FROM DailySessions ds
+JOIN DailyShifts sh ON sh.SessionId=ds.Id
+WHERE ds.BusinessDate=$date AND ds.Status='OPEN' AND sh.Status='OPEN' AND sh.UserName=$user";
+                shift.Parameters.AddWithValue("$date", DateTime.Today.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
+                shift.Parameters.AddWithValue("$user", currentUser);
+                openShift = Convert.ToInt64(shift.ExecuteScalar() ?? 0, CultureInfo.InvariantCulture);
+            }
+            long returnDocuments = returnsTable ? Scalar("SELECT COUNT(*) FROM SalesReturns") : 0;
+            long returnItems = itemsTable ? Scalar("SELECT COUNT(*) FROM SalesReturnItems") : 0;
+            long returnedUnits = itemsTable ? Scalar("SELECT COALESCE(SUM(Quantity),0) FROM SalesReturnItems") : 0;
+            long availableLines = returnsTable && itemsTable
+                ? BusinessManagementStore.LoadReturnableSales("").Count
+                : 0;
+            long overReturnedLines = itemsTable
+                ? Scalar(@"SELECT COUNT(*) FROM (
+SELECT ri.OriginalTransactionId
+FROM SalesReturnItems ri JOIN Transactions t ON t.Id=ri.OriginalTransactionId
+GROUP BY ri.OriginalTransactionId
+HAVING SUM(ri.Quantity)>MAX(COALESCE(t.Quantity,1))
+)")
+                : 0;
+            long missingStockMovements = returnsTable && itemsTable && inventoryTable
+                ? Scalar(@"SELECT COUNT(*) FROM SalesReturns sr
+WHERE EXISTS(SELECT 1 FROM SalesReturnItems ri WHERE ri.ReturnId=sr.Id)
+AND NOT EXISTS(SELECT 1 FROM InventoryMovements im WHERE im.ReferenceType='SalesReturn' AND im.ReferenceId=sr.Id)")
+                : 0;
+            long missingTreasuryMovements = returnsTable && treasuryTable
+                ? Scalar(@"SELECT COUNT(*) FROM SalesReturns sr
+WHERE sr.RefundAmount - COALESCE((
+    SELECT SUM(d.Amount) FROM Debts_History d
+    WHERE d.Type='PAYMENT' AND d.Note LIKE ('تسوية من مرتجع مبيعات رقم ' || sr.Id || '%')
+),0) > 0.005
+AND NOT EXISTS(SELECT 1 FROM TreasuryMovements tm WHERE tm.ReferenceType='SalesReturn' AND tm.ReferenceId=sr.Id)")
+                : 0;
+
+            var issues = new List<string>();
+            if (!returnsTable || !itemsTable) issues.Add("جداول المرتجعات غير مكتملة؛ يلزم تهيئة قاعدة البيانات.");
+            if (creditSales > 0)
+                issues.Add($"يوجد {creditSales} عملية بيع آجل عليها رصيد؛ أصبحت هذه العمليات ظاهرة للإرجاع، وتُخصم قيمة المرتجع من دين العميل قبل أي رد نقدي.");
+            if (openShift == 0 && missingTreasuryMovements > 0)
+                issues.Add("لا يوجد شفت مفتوح للمستخدم الحالي؛ راجع المرتجعات التي تحتاج ردًا نقديًا وافتح الشفت قبل تسجيلها.");
+            if (overReturnedLines > 0) issues.Add("يوجد سطر بيع تم إرجاع كمية أكبر من الكمية المباعة؛ راجع سجلات المرتجعات.");
+            if (missingStockMovements > 0) issues.Add("بعض فواتير المرتجع لا يقابلها سجل حركة مخزون.");
+            if (missingTreasuryMovements > 0) issues.Add("بعض فواتير المرتجع لا يقابلها سجل حركة خزينة.");
+            if (issues.Count == 0) issues.Add("لم يتم العثور على خلل بنيوي أو قيد تشغيل واضح في السجلات التي فحصها التشخيص.");
+
+            string report =
+                $"تشخيص المرتجعات — {DateTime.Now:yyyy-MM-dd HH:mm}\n\n" +
+                $"عمليات بيع أصناف مسجلة: {saleLines}\n" +
+                $"عمليات بيع آجلة عليها رصيد (متاحة الآن للبحث والإرجاع): {creditSales}\n" +
+                $"عمليات بيع متاحة للإرجاع في نتائج الشاشة (حتى 300): {availableLines}\n" +
+                $"الشفت المفتوح للمستخدم الحالي: {(openShift > 0 ? "نعم" : "لا")}\n" +
+                $"فواتير مرتجعات مسجلة: {returnDocuments}\n" +
+                $"سطور مرتجعات مسجلة: {returnItems}\n" +
+                $"إجمالي الوحدات المرتجعة: {returnedUnits}\n" +
+                $"سطور تجاوزت الكمية المباعة: {overReturnedLines}\n" +
+                $"مرتجعات بلا حركة مخزون مقابلة: {missingStockMovements}\n" +
+                $"مرتجعات بلا حركة خزينة مقابلة: {missingTreasuryMovements}\n\n" +
+                "نتيجة الفحص:\n• " + string.Join("\n• ", issues) +
+                "\n\nملاحظة: التشخيص يقرأ السجلات فقط ولا يغيّر الكميات أو الأرصدة.";
+            ShowArchiveText("تقرير تشخيص المرتجعات", report);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("تعذر تشخيص المرتجعات", ex);
+            MessageBox.Show(this, "تعذر إكمال فحص المرتجعات:\n" + ex.Message, "تشخيص المرتجعات", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+
     private void ProcessReturn()
     {
         if (returnGrid.CurrentRow?.Tag is not ReturnableSaleRow sale) { MessageBox.Show(this, "اختر عملية بيع من الجدول.", "مرتجع", MessageBoxButtons.OK, MessageBoxIcon.Information); return; }
@@ -544,11 +1300,13 @@ FROM Purchases WHERE SupplierId=$s ORDER BY CreatedAt DESC,Id DESC LIMIT 300";
         if (qty > sale.AvailableQuantity) { MessageBox.Show(this, $"المتاح للإرجاع {sale.AvailableQuantity} فقط.", "الكمية", MessageBoxButtons.OK, MessageBoxIcon.Warning); return; }
         try
         {
-            var answer = MessageBox.Show(this, $"تأكيد إرجاع {qty} من ({sale.ProductName})؟\nسيتم رد المبلغ وإضافة الكمية للمخزن.", "تأكيد المرتجع", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+            var answer = MessageBox.Show(this, $"تأكيد إرجاع {qty} من ({sale.ProductName})؟\nسيتم إضافة الكمية للمخزن، وخصم قيمة المرتجع من دين العميل أولًا، ورد أي فائض نقدًا فقط.", "تأكيد المرتجع", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
             if (answer != DialogResult.Yes) return;
             var result = BusinessManagementStore.RecordSaleReturn(currentUser, sale.TransactionId, qty, returnReason.Text);
-            returnReason.Clear(); LoadReturnRows();
-            MessageBox.Show(this, $"تم تسجيل المرتجع رقم {result.ReturnId}.\nالمبلغ المردود: {result.Refund:N2} ج.م", "تم", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            returnReason.Clear(); LoadReturnRows(); LoadReturnArchive();
+            MessageBox.Show(this,
+                $"تم تسجيل المرتجع رقم {result.ReturnId}.\nقيمة المرتجع: {result.Refund:N2} ج.م\nالمخصوم من دين العميل: {result.DebtOffset:N2} ج.م\nالمردود نقدًا: {result.CashRefund:N2} ج.م",
+                "تم", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
         catch (Exception ex) { AppLog.Error("تعذر تسجيل مرتجع", ex); MessageBox.Show(this, ex.Message, "مرتجع", MessageBoxButtons.OK, MessageBoxIcon.Error); }
     }
@@ -580,6 +1338,9 @@ FROM Purchases WHERE SupplierId=$s ORDER BY CreatedAt DESC,Id DESC LIMIT 300";
             profitEmployeeGrid.Rows.Clear();
             foreach (var item in p.EmployeeBreakdown)
                 profitEmployeeGrid.Rows.Add(item.UserName, item.SalesRevenue.ToString("N2"), item.KnownGrossProfit.ToString("N2"), item.SaleCount, item.UncostedCount);
+            profitPrintingGrid.Rows.Clear();
+            foreach (var item in p.PrintingBreakdown)
+                profitPrintingGrid.Rows.Add(item.Category, item.ColorType, item.DuplexMode, item.Jobs, item.Revenue.ToString("N2"));
         }
         catch (Exception ex) { MessageBox.Show(this, ex.Message, "تقرير الأرباح", MessageBoxButtons.OK, MessageBoxIcon.Error); }
     }
@@ -668,7 +1429,7 @@ ORDER BY im.CreatedAt DESC,im.Id DESC LIMIT 1500";
         try
         {
             var sb = new StringBuilder();
-            sb.AppendLine("Barcode,Name,Description,Category,PurchasePrice,SalePrice,Quantity,MinQuantity");
+            sb.AppendLine(string.Join(",", new[] { "الباركود", "اسم الصنف", "الوصف", "الفئة", "سعر الشراء", "سعر البيع", "الكمية", "الحد الأدنى" }.Select(CsvEscape)));
             if (!template)
             {
                 using var c = AppDatabase.OpenConnection(); using var cmd = c.CreateCommand();
@@ -696,6 +1457,19 @@ ORDER BY im.CreatedAt DESC,im.Id DESC LIMIT 1500";
             if (csvRows.Count < 2) throw new InvalidOperationException("الملف فارغ أو لا يحتوي على صفوف أصناف.");
             var header = csvRows[0].Select(x => x.Trim()).ToList();
             if (header.Count > 0) header[0] = header[0].TrimStart('\uFEFF');
+            string CanonicalHeader(string value) => value.Trim().ToLowerInvariant() switch
+            {
+                "barcode" or "الباركود" or "باركود" => "Barcode",
+                "name" or "اسم الصنف" or "الصنف" => "Name",
+                "description" or "الوصف" => "Description",
+                "category" or "الفئة" or "التصنيف" => "Category",
+                "purchaseprice" or "سعر الشراء" or "تكلفة الشراء" => "PurchasePrice",
+                "saleprice" or "سعر البيع" => "SalePrice",
+                "quantity" or "الكمية" => "Quantity",
+                "minquantity" or "الحد الأدنى" or "الحد الادنى" => "MinQuantity",
+                _ => value.Trim()
+            };
+            header = header.Select(CanonicalHeader).ToList();
             string[] requiredHeaders = { "Barcode", "Name", "Description", "Category", "PurchasePrice", "SalePrice", "Quantity", "MinQuantity" };
             foreach (string h in requiredHeaders) if (!header.Contains(h, StringComparer.OrdinalIgnoreCase)) throw new InvalidOperationException("أعمدة الملف غير مطابقة. استخدم قالب المخزن الذي يوفره البرنامج.");
             int Index(string name) => header.FindIndex(x => string.Equals(x, name, StringComparison.OrdinalIgnoreCase));
@@ -828,6 +1602,8 @@ internal sealed class AmountNoteDialog : Form
     public AmountNoteDialog(string title, decimal maximum)
     {
         UiKit.PrepareForm(this, title, 480, 300);
+        KeyPreview = true;
+        KeyDown += (_, e) => { if (e.KeyCode == Keys.Escape) { e.Handled = true; e.SuppressKeyPress = true; Close(); } };
         var root = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(24), ColumnCount = 2, RowCount = 3 };
         root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 35)); root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 65));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 58)); root.RowStyles.Add(new RowStyle(SizeType.Absolute, 58)); root.RowStyles.Add(new RowStyle(SizeType.Absolute, 58));
@@ -839,4 +1615,45 @@ internal sealed class AmountNoteDialog : Form
         root.Controls.Add(new Label(), 0, 2); root.Controls.Add(ok, 1, 2); Controls.Add(root); AcceptButton = ok;
     }
     private static Label MakeFieldLabel(string text) => new() { Text = text, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleRight, Font = new Font("Segoe UI", 10F, FontStyle.Bold) };
+}
+
+
+internal sealed class AdminPasswordPromptForm : Form
+{
+    private readonly TextBox password = new() { UseSystemPasswordChar = true, Dock = DockStyle.Fill, Font = new Font("Segoe UI", 12F) };
+    public string Password => password.Text;
+
+    public AdminPasswordPromptForm()
+    {
+        Text = "مصادقة الإدارة";
+        StartPosition = FormStartPosition.CenterParent;
+        FormBorderStyle = FormBorderStyle.FixedDialog;
+        MaximizeBox = false; MinimizeBox = false; ShowInTaskbar = false;
+        Size = new Size(390, 190);
+        RightToLeft = RightToLeft.Yes; RightToLeftLayout = true;
+        Font = new Font("Segoe UI", 10F); BackColor = Color.White;
+        KeyPreview = true;
+        KeyDown += (_, e) => { if (e.KeyCode == Keys.Escape) { e.Handled = true; e.SuppressKeyPress = true; DialogResult = DialogResult.Cancel; Close(); } };
+        var root = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(14), ColumnCount = 1, RowCount = 3 };
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
+        root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        root.Controls.Add(new Label { Text = "أدخل كلمة مرور الإدارة للسماح بتعديل بيانات المورد:", Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleRight }, 0, 0);
+        root.Controls.Add(password, 0, 1);
+        var buttons = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight };
+        var ok = UiKit.Button("متابعة", UiKit.Success, 105, 36); ok.Click += (_, _) => { if (string.IsNullOrWhiteSpace(password.Text)) { MessageBox.Show(this, "أدخل كلمة المرور.", "مصادقة الإدارة", MessageBoxButtons.OK, MessageBoxIcon.Warning); return; } DialogResult = DialogResult.OK; Close(); };
+        var cancel = UiKit.Button("إلغاء", Color.FromArgb(108, 117, 125), 95, 36); cancel.DialogResult = DialogResult.Cancel;
+        buttons.Controls.Add(ok); buttons.Controls.Add(cancel); root.Controls.Add(buttons, 0, 2);
+        Controls.Add(root); AcceptButton = ok; CancelButton = cancel;
+        Shown += (_, _) => password.Focus();
+    }
+}
+
+
+internal sealed class PurchaseInvoiceChoice
+{
+    public long? PurchaseId { get; }
+    private readonly string label;
+    public PurchaseInvoiceChoice(long? purchaseId,string label){PurchaseId=purchaseId;this.label=label;}
+    public override string ToString()=>label;
 }

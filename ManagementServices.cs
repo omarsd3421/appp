@@ -56,6 +56,78 @@ internal sealed class SupplierLookupRow
     public override string ToString() => string.IsNullOrWhiteSpace(Phone) ? Name : $"{Name} — {Phone}";
 }
 
+
+internal sealed class SupplierDetailsRow
+{
+    public long Id { get; init; }
+    public string Name { get; init; } = "";
+    public string Phone { get; init; } = "";
+    public string Address { get; init; } = "";
+    public string Notes { get; init; } = "";
+    public decimal Balance { get; init; }
+}
+
+internal sealed class SupplierPaymentHistoryRow
+{
+    public long Id { get; init; }
+    public long PurchaseId { get; init; }
+    public DateTime CreatedAt { get; init; }
+    public string InvoiceNumber { get; init; } = "";
+    public decimal Amount { get; init; }
+    public string Note { get; init; } = "";
+    public string UserName { get; init; } = "";
+}
+
+internal class PurchaseArchiveRow
+{
+    public long Id { get; init; }
+    public string InvoiceNumber { get; init; } = "";
+    public string SupplierName { get; init; } = "";
+    public decimal Total { get; init; }
+    public decimal Paid { get; init; }
+    public decimal Remaining { get; init; }
+    public DateTime CreatedAt { get; init; }
+}
+
+internal sealed class PurchaseInvoiceHeaderRow : PurchaseArchiveRow
+{
+    public string Notes { get; init; } = "";
+    public string UserName { get; init; } = "";
+}
+
+internal sealed class PurchaseInvoiceItemRow
+{
+    public string ProductName { get; init; } = "";
+    public int Quantity { get; init; }
+    public decimal UnitCost { get; init; }
+    public decimal Total { get; init; }
+}
+
+internal class SalesReturnArchiveRow
+{
+    public long Id { get; init; }
+    public string OriginalTransactions { get; init; } = "";
+    public string Products { get; init; } = "";
+    public decimal RefundAmount { get; init; }
+    public string Reason { get; init; } = "";
+    public string UserName { get; init; } = "";
+    public DateTime CreatedAt { get; init; }
+}
+
+internal sealed class SalesReturnHeaderRow : SalesReturnArchiveRow
+{
+    public string CustomerName { get; init; } = "";
+}
+
+internal sealed class SalesReturnItemRow
+{
+    public long OriginalTransactionId { get; init; }
+    public string ProductName { get; init; } = "";
+    public int Quantity { get; init; }
+    public decimal RefundAmount { get; init; }
+    public decimal? ReturnedCost { get; init; }
+}
+
 internal sealed class ReturnableSaleRow
 {
     public long TransactionId { get; init; }
@@ -69,6 +141,17 @@ internal sealed class ReturnableSaleRow
     public decimal PurchaseCostTotal { get; init; }
 }
 
+
+internal sealed class ProfitPrintingCategoryRow
+{
+    public string Category { get; init; } = "";
+    public string ColorType { get; init; } = "";
+    public string DuplexMode { get; init; } = "";
+    public int Jobs { get; init; }
+    public int Faces { get; init; }
+    public int Sheets { get; init; }
+    public decimal Revenue { get; init; }
+}
 
 internal sealed class ProfitProductRow
 {
@@ -107,6 +190,7 @@ internal sealed class ProfitSnapshot
     public int UncostedLegacyCount { get; init; }
     public List<ProfitProductRow> ProductBreakdown { get; init; } = new();
     public List<ProfitEmployeeRow> EmployeeBreakdown { get; init; } = new();
+    public List<ProfitPrintingCategoryRow> PrintingBreakdown { get; init; } = new();
     public decimal KnownNetProfit => SalesGrossProfit - (ReturnedSales - ReturnCost)
         + CashServiceCommissions + OtherServiceCommissions - OperatingExpenses;
 }
@@ -165,6 +249,47 @@ CREATE TABLE IF NOT EXISTS SupplierPayments (
     FOREIGN KEY(UserId) REFERENCES AppUsers(Id)
 );
 CREATE INDEX IF NOT EXISTS IX_SupplierPayments_Supplier ON SupplierPayments(SupplierId,CreatedAt);
+CREATE TABLE IF NOT EXISTS PurchaseReturns (
+    Id INTEGER PRIMARY KEY AUTOINCREMENT,
+    SupplierId INTEGER NOT NULL,
+    UserId INTEGER NOT NULL,
+    TotalAmount NUMERIC NOT NULL,
+    CashRefund NUMERIC NOT NULL DEFAULT 0,
+    Reason TEXT NULL,
+    CreatedAt TEXT NOT NULL,
+    FOREIGN KEY(SupplierId) REFERENCES Suppliers(Id),
+    FOREIGN KEY(UserId) REFERENCES AppUsers(Id)
+);
+CREATE TABLE IF NOT EXISTS PurchaseReturnItems (
+    Id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ReturnId INTEGER NOT NULL,
+    PurchaseId INTEGER NOT NULL,
+    PurchaseItemId INTEGER NOT NULL,
+    ProductId INTEGER NOT NULL,
+    ProductNameSnapshot TEXT NOT NULL,
+    Quantity INTEGER NOT NULL,
+    UnitCost NUMERIC NOT NULL,
+    LineTotal NUMERIC NOT NULL,
+    FOREIGN KEY(ReturnId) REFERENCES PurchaseReturns(Id) ON DELETE CASCADE,
+    FOREIGN KEY(PurchaseId) REFERENCES Purchases(Id),
+    FOREIGN KEY(PurchaseItemId) REFERENCES PurchaseItems(Id),
+    FOREIGN KEY(ProductId) REFERENCES Products(Id)
+);
+CREATE INDEX IF NOT EXISTS IX_PurchaseReturns_SupplierDate ON PurchaseReturns(SupplierId,CreatedAt);
+CREATE INDEX IF NOT EXISTS IX_PurchaseReturnItems_PurchaseItem ON PurchaseReturnItems(PurchaseItemId);
+CREATE TABLE IF NOT EXISTS SupplierCredits (
+    Id INTEGER PRIMARY KEY AUTOINCREMENT,
+    SupplierId INTEGER NOT NULL,
+    SourceReturnId INTEGER NOT NULL,
+    OriginalAmount NUMERIC NOT NULL,
+    RemainingAmount NUMERIC NOT NULL,
+    CreatedAt TEXT NOT NULL,
+    Note TEXT NULL,
+    FOREIGN KEY(SupplierId) REFERENCES Suppliers(Id),
+    FOREIGN KEY(SourceReturnId) REFERENCES PurchaseReturns(Id)
+);
+CREATE INDEX IF NOT EXISTS IX_SupplierCredits_Supplier ON SupplierCredits(SupplierId,CreatedAt);
+
 CREATE TABLE IF NOT EXISTS InventoryMovements (
     Id INTEGER PRIMARY KEY AUTOINCREMENT,
     ProductId INTEGER NOT NULL,
@@ -421,9 +546,11 @@ FROM SuspendedSaleItems WHERE SuspendedSaleId=$id ORDER BY Id";
         var result = new List<SupplierLookupRow>();
         using var c = AppDatabase.OpenConnection();
         using var cmd = c.CreateCommand();
-        cmd.CommandText = @"SELECT s.Id,s.Name,COALESCE(s.Phone,''),COALESCE(SUM(p.RemainingAmount),0)
-FROM Suppliers s LEFT JOIN Purchases p ON p.SupplierId=s.Id
-WHERE s.IsActive=1 GROUP BY s.Id,s.Name,s.Phone ORDER BY s.Name COLLATE NOCASE";
+        cmd.CommandText = @"SELECT s.Id,s.Name,COALESCE(s.Phone,''),
+COALESCE((SELECT SUM(p.RemainingAmount) FROM Purchases p WHERE p.SupplierId=s.Id),0)
+- COALESCE((SELECT SUM(sc.RemainingAmount) FROM SupplierCredits sc WHERE sc.SupplierId=s.Id),0)
+FROM Suppliers s
+WHERE s.IsActive=1 ORDER BY s.Name COLLATE NOCASE";
         using var r = cmd.ExecuteReader();
         while (r.Read()) result.Add(new SupplierLookupRow
         {
@@ -449,6 +576,238 @@ WHERE s.IsActive=1 GROUP BY s.Id,s.Name,s.Phone ORDER BY s.Name COLLATE NOCASE";
         AppDatabase.AddAuditLog(c, tx, userName, "إضافة", "مورد", id, $"المورد: {name.Trim()} | الهاتف: {phone}");
         tx.Commit();
         return id;
+    }
+
+
+    public static SupplierDetailsRow? LoadSupplierDetails(long supplierId)
+    {
+        using var c = AppDatabase.OpenConnection();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = @"SELECT s.Id,s.Name,COALESCE(s.Phone,''),COALESCE(s.Address,''),COALESCE(s.Notes,''),
+COALESCE((SELECT SUM(p.RemainingAmount) FROM Purchases p WHERE p.SupplierId=s.Id),0)
+- COALESCE((SELECT SUM(sc.RemainingAmount) FROM SupplierCredits sc WHERE sc.SupplierId=s.Id),0)
+FROM Suppliers s WHERE s.Id=$id LIMIT 1";
+        cmd.Parameters.AddWithValue("$id", supplierId);
+        using var r = cmd.ExecuteReader();
+        if (!r.Read()) return null;
+        return new SupplierDetailsRow
+        {
+            Id = r.GetInt64(0), Name = r.GetString(1), Phone = r.GetString(2),
+            Address = r.GetString(3), Notes = r.GetString(4), Balance = Dec(r.GetValue(5))
+        };
+    }
+
+    public static void UpdateSupplier(string userName, long supplierId, string name, string? phone, string? address)
+    {
+        if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("اسم المورد مطلوب.");
+        using var c = AppDatabase.OpenConnection();
+        using var tx = c.BeginTransaction();
+        using var cmd = c.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = @"UPDATE Suppliers SET Name=$name,Phone=$phone,Address=$address WHERE Id=$id AND IsActive=1";
+        cmd.Parameters.AddWithValue("$name", name.Trim());
+        cmd.Parameters.AddWithValue("$phone", DbText(phone));
+        cmd.Parameters.AddWithValue("$address", DbText(address));
+        cmd.Parameters.AddWithValue("$id", supplierId);
+        if (cmd.ExecuteNonQuery() != 1) throw new InvalidOperationException("المورد غير موجود أو تم إيقافه.");
+        AppDatabase.AddAuditLog(c, tx, userName, "تعديل", "مورد", supplierId,
+            $"الاسم: {name.Trim()} | الهاتف: {phone} | العنوان: {address}");
+        tx.Commit();
+    }
+
+    public static List<SupplierPaymentHistoryRow> LoadSupplierPaymentHistory(long supplierId)
+    {
+        var result = new List<SupplierPaymentHistoryRow>();
+        using var c = AppDatabase.OpenConnection();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = @"SELECT sp.Id,sp.PurchaseId,sp.CreatedAt,COALESCE(p.InvoiceNumber,''),sp.Amount,
+COALESCE(sp.Note,''),COALESCE(u.UserName,'')
+FROM SupplierPayments sp
+JOIN Purchases p ON p.Id=sp.PurchaseId
+LEFT JOIN AppUsers u ON u.Id=sp.UserId
+WHERE sp.SupplierId=$id
+ORDER BY sp.CreatedAt DESC,sp.Id DESC LIMIT 1000";
+        cmd.Parameters.AddWithValue("$id", supplierId);
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            DateTime date = DateTime.TryParse(r.GetString(2), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var parsed) ? parsed : DateTime.MinValue;
+            result.Add(new SupplierPaymentHistoryRow
+            {
+                Id = r.GetInt64(0), PurchaseId = r.GetInt64(1), CreatedAt = date,
+                InvoiceNumber = r.GetString(3), Amount = Dec(r.GetValue(4)),
+                Note = r.GetString(5), UserName = r.GetString(6)
+            });
+        }
+        return result;
+    }
+
+    public static List<PurchaseArchiveRow> LoadPurchaseArchiveRows(string? search, long? supplierId = null)
+    {
+        var result = new List<PurchaseArchiveRow>();
+        string q = (search ?? "").Trim();
+        using var c = AppDatabase.OpenConnection();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = @"SELECT p.Id,COALESCE(p.InvoiceNumber,''),s.Name,p.TotalAmount,p.PaidAmount,p.RemainingAmount,p.CreatedAt
+FROM Purchases p JOIN Suppliers s ON s.Id=p.SupplierId
+WHERE ($supplier IS NULL OR p.SupplierId=$supplier)
+AND ($q='' OR COALESCE(p.InvoiceNumber,'') LIKE $pattern OR s.Name LIKE $pattern OR CAST(p.Id AS TEXT) LIKE $pattern)
+ORDER BY p.CreatedAt DESC,p.Id DESC LIMIT 1000";
+        cmd.Parameters.AddWithValue("$supplier", (object?)supplierId ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("$q", q);
+        cmd.Parameters.AddWithValue("$pattern", "%" + q + "%");
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            DateTime date = DateTime.TryParse(r.GetString(6), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var parsed) ? parsed : DateTime.MinValue;
+            result.Add(new PurchaseArchiveRow
+            {
+                Id = r.GetInt64(0), InvoiceNumber = r.GetString(1), SupplierName = r.GetString(2),
+                Total = Dec(r.GetValue(3)), Paid = Dec(r.GetValue(4)), Remaining = Dec(r.GetValue(5)), CreatedAt = date
+            });
+        }
+        return result;
+    }
+
+    public static PurchaseInvoiceHeaderRow? LoadPurchaseInvoiceHeader(long purchaseId)
+    {
+        using var c = AppDatabase.OpenConnection();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = @"SELECT p.Id,COALESCE(p.InvoiceNumber,''),s.Name,p.TotalAmount,p.PaidAmount,p.RemainingAmount,
+p.CreatedAt,COALESCE(p.Notes,''),COALESCE(u.UserName,'')
+FROM Purchases p JOIN Suppliers s ON s.Id=p.SupplierId
+LEFT JOIN AppUsers u ON u.Id=p.UserId
+WHERE p.Id=$id LIMIT 1";
+        cmd.Parameters.AddWithValue("$id", purchaseId);
+        using var r = cmd.ExecuteReader();
+        if (!r.Read()) return null;
+        DateTime date = DateTime.TryParse(r.GetString(6), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var parsed) ? parsed : DateTime.MinValue;
+        return new PurchaseInvoiceHeaderRow
+        {
+            Id = r.GetInt64(0), InvoiceNumber = r.GetString(1), SupplierName = r.GetString(2),
+            Total = Dec(r.GetValue(3)), Paid = Dec(r.GetValue(4)), Remaining = Dec(r.GetValue(5)),
+            CreatedAt = date, Notes = r.GetString(7), UserName = r.GetString(8)
+        };
+    }
+
+    public static List<PurchaseInvoiceItemRow> LoadPurchaseInvoiceItems(long purchaseId)
+    {
+        var result = new List<PurchaseInvoiceItemRow>();
+        using var c = AppDatabase.OpenConnection();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = @"SELECT ProductNameSnapshot,Quantity,UnitCost,LineTotal
+FROM PurchaseItems WHERE PurchaseId=$id ORDER BY Id";
+        cmd.Parameters.AddWithValue("$id", purchaseId);
+        using var r = cmd.ExecuteReader();
+        while (r.Read()) result.Add(new PurchaseInvoiceItemRow
+        {
+            ProductName = r.GetString(0), Quantity = Convert.ToInt32(r.GetValue(1), CultureInfo.InvariantCulture),
+            UnitCost = Dec(r.GetValue(2)), Total = Dec(r.GetValue(3))
+        });
+        return result;
+    }
+
+    public static List<SupplierPaymentHistoryRow> LoadPurchaseInvoicePayments(long purchaseId)
+    {
+        var result = new List<SupplierPaymentHistoryRow>();
+        using var c = AppDatabase.OpenConnection();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = @"SELECT sp.Id,sp.PurchaseId,sp.CreatedAt,COALESCE(p.InvoiceNumber,''),sp.Amount,
+COALESCE(sp.Note,''),COALESCE(u.UserName,'')
+FROM SupplierPayments sp JOIN Purchases p ON p.Id=sp.PurchaseId
+LEFT JOIN AppUsers u ON u.Id=sp.UserId
+WHERE sp.PurchaseId=$id ORDER BY sp.CreatedAt,sp.Id";
+        cmd.Parameters.AddWithValue("$id", purchaseId);
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            DateTime date = DateTime.TryParse(r.GetString(2), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var parsed) ? parsed : DateTime.MinValue;
+            result.Add(new SupplierPaymentHistoryRow
+            {
+                Id = r.GetInt64(0), PurchaseId = r.GetInt64(1), CreatedAt = date,
+                InvoiceNumber = r.GetString(3), Amount = Dec(r.GetValue(4)),
+                Note = r.GetString(5), UserName = r.GetString(6)
+            });
+        }
+        return result;
+    }
+
+    public static List<SalesReturnArchiveRow> LoadSalesReturnArchiveRows(string? search)
+    {
+        var result = new List<SalesReturnArchiveRow>();
+        string q = (search ?? "").Trim();
+        using var c = AppDatabase.OpenConnection();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = @"SELECT sr.Id,sr.CreatedAt,
+COALESCE(GROUP_CONCAT(DISTINCT ri.OriginalTransactionId),''),
+COALESCE(GROUP_CONCAT(ri.ProductNameSnapshot || ' × ' || ri.Quantity,'،'),''),
+sr.RefundAmount,sr.Reason,COALESCE(u.UserName,'')
+FROM SalesReturns sr
+LEFT JOIN SalesReturnItems ri ON ri.ReturnId=sr.Id
+LEFT JOIN AppUsers u ON u.Id=sr.UserId
+WHERE ($q='' OR CAST(sr.Id AS TEXT) LIKE $pattern OR sr.Reason LIKE $pattern
+OR EXISTS(SELECT 1 FROM SalesReturnItems x WHERE x.ReturnId=sr.Id AND
+(x.ProductNameSnapshot LIKE $pattern OR CAST(x.OriginalTransactionId AS TEXT) LIKE $pattern)))
+GROUP BY sr.Id,sr.CreatedAt,sr.RefundAmount,sr.Reason,u.UserName
+ORDER BY sr.CreatedAt DESC,sr.Id DESC LIMIT 1000";
+        cmd.Parameters.AddWithValue("$q", q);
+        cmd.Parameters.AddWithValue("$pattern", "%" + q + "%");
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            DateTime date = DateTime.TryParse(r.GetString(1), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var parsed) ? parsed : DateTime.MinValue;
+            result.Add(new SalesReturnArchiveRow
+            {
+                Id = r.GetInt64(0), CreatedAt = date, OriginalTransactions = r.GetString(2),
+                Products = r.GetString(3), RefundAmount = Dec(r.GetValue(4)),
+                Reason = r.GetString(5), UserName = r.GetString(6)
+            });
+        }
+        return result;
+    }
+
+    public static SalesReturnHeaderRow? LoadSalesReturnHeader(long returnId)
+    {
+        using var c = AppDatabase.OpenConnection();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = @"SELECT sr.Id,sr.CreatedAt,
+COALESCE(GROUP_CONCAT(DISTINCT ri.OriginalTransactionId),''),
+COALESCE(GROUP_CONCAT(ri.ProductNameSnapshot || ' × ' || ri.Quantity,'،'),''),
+sr.RefundAmount,sr.Reason,COALESCE(u.UserName,''),COALESCE(c.Name,'')
+FROM SalesReturns sr
+LEFT JOIN SalesReturnItems ri ON ri.ReturnId=sr.Id
+LEFT JOIN AppUsers u ON u.Id=sr.UserId
+LEFT JOIN Customers c ON c.Id=sr.CustomerId
+WHERE sr.Id=$id
+GROUP BY sr.Id,sr.CreatedAt,sr.RefundAmount,sr.Reason,u.UserName,c.Name LIMIT 1";
+        cmd.Parameters.AddWithValue("$id", returnId);
+        using var r = cmd.ExecuteReader();
+        if (!r.Read()) return null;
+        DateTime date = DateTime.TryParse(r.GetString(1), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var parsed) ? parsed : DateTime.MinValue;
+        return new SalesReturnHeaderRow
+        {
+            Id = r.GetInt64(0), CreatedAt = date, OriginalTransactions = r.GetString(2),
+            Products = r.GetString(3), RefundAmount = Dec(r.GetValue(4)),
+            Reason = r.GetString(5), UserName = r.GetString(6), CustomerName = r.GetString(7)
+        };
+    }
+
+    public static List<SalesReturnItemRow> LoadSalesReturnItems(long returnId)
+    {
+        var result = new List<SalesReturnItemRow>();
+        using var c = AppDatabase.OpenConnection();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = @"SELECT OriginalTransactionId,ProductNameSnapshot,Quantity,RefundAmount,CostReturned
+FROM SalesReturnItems WHERE ReturnId=$id ORDER BY Id";
+        cmd.Parameters.AddWithValue("$id", returnId);
+        using var r = cmd.ExecuteReader();
+        while (r.Read()) result.Add(new SalesReturnItemRow
+        {
+            OriginalTransactionId = r.GetInt64(0), ProductName = r.GetString(1),
+            Quantity = Convert.ToInt32(r.GetValue(2), CultureInfo.InvariantCulture),
+            RefundAmount = Dec(r.GetValue(3)), ReturnedCost = r.IsDBNull(4) ? null : Dec(r.GetValue(4))
+        });
+        return result;
     }
 
     public static long CreatePurchase(string userName, long supplierId, string? invoiceNumber, string? notes,
@@ -478,12 +837,51 @@ VALUES($s,$no,$t,$paid,$remain,$notes,$u,$d); SELECT last_insert_rowid();";
         insert.Parameters.AddWithValue("$s", supplierId);
         insert.Parameters.AddWithValue("$no", DbText(invoiceNumber));
         insert.Parameters.AddWithValue("$t", total);
-        insert.Parameters.AddWithValue("$paid", paidAmount);
-        insert.Parameters.AddWithValue("$remain", total - paidAmount);
+        // Apply any credit balance previously created by supplier returns before creating new debt.
+        decimal supplierCredit = 0m;
+        using (var credits = c.CreateCommand())
+        {
+            credits.Transaction = tx;
+            credits.CommandText = "SELECT Id,RemainingAmount FROM SupplierCredits WHERE SupplierId=$s AND RemainingAmount>0 ORDER BY CreatedAt,Id";
+            credits.Parameters.AddWithValue("$s", supplierId);
+            var availableCredits = new List<(long Id, decimal Remaining)>();
+            using (var cr = credits.ExecuteReader())
+                while (cr.Read()) availableCredits.Add((cr.GetInt64(0), Dec(cr.GetValue(1))));
+            decimal creditToApply = Math.Max(0m, total - paidAmount);
+            foreach (var credit in availableCredits)
+            {
+                if (creditToApply <= 0.005m) break;
+                decimal applied = Math.Min(creditToApply, credit.Remaining);
+                using var apply = c.CreateCommand();
+                apply.Transaction = tx;
+                apply.CommandText = "UPDATE SupplierCredits SET RemainingAmount=MAX(0,RemainingAmount-$a) WHERE Id=$id";
+                apply.Parameters.AddWithValue("$a", applied);
+                apply.Parameters.AddWithValue("$id", credit.Id);
+                apply.ExecuteNonQuery();
+                supplierCredit += applied;
+                creditToApply -= applied;
+            }
+        }
+        insert.Parameters.AddWithValue("$paid", paidAmount + supplierCredit);
+        insert.Parameters.AddWithValue("$remain", Math.Max(0m, total - paidAmount - supplierCredit));
         insert.Parameters.AddWithValue("$notes", DbText(notes));
         insert.Parameters.AddWithValue("$u", userId);
         insert.Parameters.AddWithValue("$d", DateTime.Now.ToString("O", CultureInfo.InvariantCulture));
         long purchaseId = Convert.ToInt64(insert.ExecuteScalar(), CultureInfo.InvariantCulture);
+        if (supplierCredit > 0.005m)
+        {
+            using var creditPayment = c.CreateCommand();
+            creditPayment.Transaction = tx;
+            creditPayment.CommandText = @"INSERT INTO SupplierPayments(SupplierId,PurchaseId,UserId,Amount,Note,CreatedAt)
+VALUES($s,$p,$u,$a,$n,$d)";
+            creditPayment.Parameters.AddWithValue("$s", supplierId);
+            creditPayment.Parameters.AddWithValue("$p", purchaseId);
+            creditPayment.Parameters.AddWithValue("$u", userId);
+            creditPayment.Parameters.AddWithValue("$a", supplierCredit);
+            creditPayment.Parameters.AddWithValue("$n", "تسوية من رصيد دائن سابق ناتج عن مرتجع مشتريات (بدون حركة خزنة)");
+            creditPayment.Parameters.AddWithValue("$d", DateTime.Now.ToString("O", CultureInfo.InvariantCulture));
+            creditPayment.ExecuteNonQuery();
+        }
 
         foreach (var line in lines)
         {
@@ -535,9 +933,199 @@ VALUES($s,$no,$t,$paid,$remain,$notes,$u,$d); SELECT last_insert_rowid();";
             pay.Parameters.AddWithValue("$d", DateTime.Now.ToString("O", CultureInfo.InvariantCulture)); pay.ExecuteNonQuery();
         }
         AppDatabase.AddAuditLog(c, tx, userName, "إنشاء", "فاتورة شراء", purchaseId,
-            $"المورد: {supplierId} | الأصناف: {lines.Count} | الإجمالي: {total:F2} | المدفوع: {paidAmount:F2} | المتبقي: {total-paidAmount:F2}");
+            $"المورد: {supplierId} | الأصناف: {lines.Count} | الإجمالي: {total:F2} | المدفوع نقدًا: {paidAmount:F2} | رصيد مورد مستخدم: {supplierCredit:F2} | المتبقي: {Math.Max(0m,total-paidAmount-supplierCredit):F2}");
         tx.Commit();
         return purchaseId;
+    }
+
+
+
+    public static List<PurchaseReturnArchiveRow> LoadPurchaseReturnArchive(long? supplierId = null)
+    {
+        var rows=new List<PurchaseReturnArchiveRow>();
+        using var c=AppDatabase.OpenConnection(); using var cmd=c.CreateCommand();
+        cmd.CommandText=@"SELECT pr.Id,pr.CreatedAt,s.Name,pr.TotalAmount,pr.CashRefund,COALESCE(pr.Reason,''),
+COALESCE(GROUP_CONCAT(ri.ProductNameSnapshot || ' × ' || ri.Quantity,'،'),'')
+FROM PurchaseReturns pr JOIN Suppliers s ON s.Id=pr.SupplierId
+LEFT JOIN PurchaseReturnItems ri ON ri.ReturnId=pr.Id
+WHERE ($s IS NULL OR pr.SupplierId=$s)
+GROUP BY pr.Id,pr.CreatedAt,s.Name,pr.TotalAmount,pr.CashRefund,pr.Reason
+ORDER BY pr.CreatedAt DESC,pr.Id DESC LIMIT 1000";
+        cmd.Parameters.AddWithValue("$s",(object?)supplierId ?? DBNull.Value);
+        using var r=cmd.ExecuteReader();
+        while(r.Read()) rows.Add(new PurchaseReturnArchiveRow {
+            Id=r.GetInt64(0),CreatedAt=DateTime.TryParse(r.GetString(1),CultureInfo.InvariantCulture,DateTimeStyles.RoundtripKind,out var dt)?dt:DateTime.MinValue,
+            SupplierName=r.GetString(2),Total=Dec(r.GetValue(3)),CashRefund=Dec(r.GetValue(4)),Reason=r.GetString(5),Products=r.GetString(6)
+        });
+        return rows;
+    }
+
+    public static List<PurchaseReturnableItemRow> LoadReturnablePurchaseItems(long supplierId, long? purchaseId = null)
+    {
+        var rows = new List<PurchaseReturnableItemRow>();
+        using var c = AppDatabase.OpenConnection();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = @"SELECT pi.Id,pi.PurchaseId,pi.ProductId,pi.ProductNameSnapshot,pi.Quantity,pi.UnitCost,
+COALESCE(p.InvoiceNumber,''),p.CreatedAt,
+COALESCE((SELECT SUM(ri.Quantity) FROM PurchaseReturnItems ri WHERE ri.PurchaseItemId=pi.Id),0)
+FROM PurchaseItems pi
+JOIN Purchases p ON p.Id=pi.PurchaseId
+WHERE p.SupplierId=$supplier AND ($purchase IS NULL OR p.Id=$purchase)
+ORDER BY p.CreatedAt,p.Id,pi.Id";
+        cmd.Parameters.AddWithValue("$supplier", supplierId);
+        cmd.Parameters.AddWithValue("$purchase", (object?)purchaseId ?? DBNull.Value);
+        using (var r = cmd.ExecuteReader())
+        {
+            while (r.Read())
+            {
+                int purchased = Convert.ToInt32(r.GetValue(4), CultureInfo.InvariantCulture);
+                int returned = Convert.ToInt32(r.GetValue(8), CultureInfo.InvariantCulture);
+                rows.Add(new PurchaseReturnableItemRow {
+                    PurchaseItemId=r.GetInt64(0), PurchaseId=r.GetInt64(1), ProductId=r.GetInt64(2),
+                    ProductName=r.GetString(3), PurchasedQuantity=purchased, ReturnedQuantity=returned,
+                    UnreturnedQuantity=Math.Max(0,purchased-returned), UnitCost=Dec(r.GetValue(5)),
+                    InvoiceNumber=r.GetString(6),
+                    PurchaseDate=DateTime.TryParse(r.GetString(7),CultureInfo.InvariantCulture,DateTimeStyles.RoundtripKind,out var dt)?dt:DateTime.MinValue
+                });
+            }
+        }
+
+        // FIFO is allocated across ALL suppliers' purchase lots for this product,
+        // not just the currently selected supplier, so sold stock is not attributed
+        // to the wrong invoice when the same product was bought from multiple suppliers.
+        foreach (var group in rows.GroupBy(x => x.ProductId))
+        {
+            using var stockQuery = c.CreateCommand();
+            stockQuery.CommandText = "SELECT Quantity FROM Products WHERE Id=$id";
+            stockQuery.Parameters.AddWithValue("$id", group.Key);
+            int stock = Math.Max(0,Convert.ToInt32(stockQuery.ExecuteScalar() ?? 0,CultureInfo.InvariantCulture));
+
+            var lots = new List<(long PurchaseItemId,int Remaining)>();
+            using (var lotsQuery = c.CreateCommand())
+            {
+                lotsQuery.CommandText = @"SELECT pi.Id,MAX(0,pi.Quantity-COALESCE((SELECT SUM(ri.Quantity) FROM PurchaseReturnItems ri WHERE ri.PurchaseItemId=pi.Id),0))
+FROM PurchaseItems pi JOIN Purchases p ON p.Id=pi.PurchaseId
+WHERE pi.ProductId=$product
+ORDER BY p.CreatedAt,p.Id,pi.Id";
+                lotsQuery.Parameters.AddWithValue("$product",group.Key);
+                using var lr=lotsQuery.ExecuteReader();
+                while(lr.Read()) lots.Add((lr.GetInt64(0),Convert.ToInt32(lr.GetValue(1),CultureInfo.InvariantCulture)));
+            }
+
+            int soldToAllocate=Math.Max(0,lots.Sum(x=>x.Remaining)-stock);
+            var availableByLot=new Dictionary<long,int>();
+            foreach(var lot in lots)
+            {
+                int soldFromLot=Math.Min(lot.Remaining,soldToAllocate);
+                soldToAllocate-=soldFromLot;
+                availableByLot[lot.PurchaseItemId]=Math.Max(0,lot.Remaining-soldFromLot);
+            }
+            foreach(var row in group)
+                row.AvailableQuantity=availableByLot.TryGetValue(row.PurchaseItemId,out int available)?available:0;
+        }
+        return rows;
+    }
+
+    public static (long ReturnId, decimal Total, decimal SupplierCredit, decimal CashRefund, decimal SupplierCreditBalance) RecordPurchaseReturn(
+        string userName, long supplierId, IReadOnlyList<PurchaseReturnLineInput> lines, string? reason)
+    {
+        if(lines==null || lines.Count==0) throw new InvalidOperationException("حدد صنفًا واحدًا على الأقل لإرجاعه.");
+        if(lines.Any(x=>x.Quantity<=0 || x.PurchaseItemId<=0)) throw new InvalidOperationException("راجع كميات المرتجع.");
+        using var c=AppDatabase.OpenConnection();
+        using var tx=c.BeginTransaction();
+        long userId=AppDatabase.GetUserId(c,userName,tx);
+        decimal total=0m;
+        var validated=new List<(PurchaseReturnLineInput Line,long PurchaseId,long ProductId,string Name,decimal Cost,int Available)>();
+        foreach(var line in lines)
+        {
+            using var q=c.CreateCommand(); q.Transaction=tx;
+            q.CommandText=@"SELECT pi.PurchaseId,pi.ProductId,pi.ProductNameSnapshot,pi.UnitCost,
+pi.Quantity-COALESCE((SELECT SUM(ri.Quantity) FROM PurchaseReturnItems ri WHERE ri.PurchaseItemId=pi.Id),0),
+p.SupplierId,pr.Quantity
+FROM PurchaseItems pi JOIN Purchases p ON p.Id=pi.PurchaseId JOIN Products pr ON pr.Id=pi.ProductId
+WHERE pi.Id=$id";
+            q.Parameters.AddWithValue("$id",line.PurchaseItemId);
+            using var r=q.ExecuteReader();
+            if(!r.Read()) throw new InvalidOperationException("أحد أصناف فاتورة الشراء لم يعد موجودًا.");
+            long purchaseId=r.GetInt64(0), productId=r.GetInt64(1); string name=r.GetString(2);
+            decimal cost=Dec(r.GetValue(3)); int remain=Convert.ToInt32(r.GetValue(4),CultureInfo.InvariantCulture);
+            long owner=r.GetInt64(5); int stock=Convert.ToInt32(r.GetValue(6),CultureInfo.InvariantCulture);
+            if(owner!=supplierId) throw new InvalidOperationException("الصنف المحدد لا يتبع المورد المختار.");
+            if(line.Quantity>remain || line.Quantity>stock) throw new InvalidOperationException($"الكمية المتاحة لإرجاع ({name}) هي {Math.Min(remain,stock)} فقط؛ لا يمكن إرجاع كمية تم بيعها أو سبق إرجاعها.");
+            validated.Add((line,purchaseId,productId,name,cost,Math.Min(remain,stock)));
+            total+=line.Quantity*cost;
+        }
+        if(total<=0) throw new InvalidOperationException("قيمة المرتجع يجب أن تكون أكبر من صفر.");
+        using(var head=c.CreateCommand())
+        {
+            head.Transaction=tx;
+            head.CommandText=@"INSERT INTO PurchaseReturns(SupplierId,UserId,TotalAmount,CashRefund,Reason,CreatedAt)
+VALUES($s,$u,$t,0,$r,$d); SELECT last_insert_rowid();";
+            head.Parameters.AddWithValue("$s",supplierId); head.Parameters.AddWithValue("$u",userId);
+            head.Parameters.AddWithValue("$t",total); head.Parameters.AddWithValue("$r",DbText(reason));
+            head.Parameters.AddWithValue("$d",DateTime.Now.ToString("O",CultureInfo.InvariantCulture));
+            long returnId=Convert.ToInt64(head.ExecuteScalar(),CultureInfo.InvariantCulture);
+            foreach(var item in validated)
+            {
+                using(var ins=c.CreateCommand())
+                {
+                    ins.Transaction=tx;
+                    ins.CommandText=@"INSERT INTO PurchaseReturnItems(ReturnId,PurchaseId,PurchaseItemId,ProductId,ProductNameSnapshot,Quantity,UnitCost,LineTotal)
+VALUES($r,$p,$pi,$prod,$n,$q,$c,$t)";
+                    ins.Parameters.AddWithValue("$r",returnId); ins.Parameters.AddWithValue("$p",item.PurchaseId);
+                    ins.Parameters.AddWithValue("$pi",item.Line.PurchaseItemId); ins.Parameters.AddWithValue("$prod",item.ProductId);
+                    ins.Parameters.AddWithValue("$n",item.Name); ins.Parameters.AddWithValue("$q",item.Line.Quantity);
+                    ins.Parameters.AddWithValue("$c",item.Cost); ins.Parameters.AddWithValue("$t",item.Line.Quantity*item.Cost);
+                    ins.ExecuteNonQuery();
+                }
+                using(var upd=c.CreateCommand())
+                {
+                    upd.Transaction=tx; upd.CommandText="UPDATE Products SET Quantity=Quantity-$q,UpdatedAt=$d,StockUpdatedAt=$d WHERE Id=$id AND Quantity>=$q";
+                    upd.Parameters.AddWithValue("$q",item.Line.Quantity); upd.Parameters.AddWithValue("$d",DateTime.Now.ToString("O",CultureInfo.InvariantCulture)); upd.Parameters.AddWithValue("$id",item.ProductId);
+                    if(upd.ExecuteNonQuery()!=1) throw new InvalidOperationException("تغير رصيد المخزون أثناء تسجيل المرتجع؛ أعد تحميل البيانات.");
+                }
+                RecordInventoryMovement(c,tx,userId,item.ProductId,"PURCHASE_RETURN_OUT",-item.Line.Quantity,item.Cost,"PurchaseReturn",returnId,$"مرتجع للمورد — فاتورة شراء #{item.PurchaseId}");
+            }
+            decimal creditLeft=total;
+            var invoices=new List<(long Id,decimal Remaining)>();
+            var sourcePurchaseIds=validated.Select(x=>x.PurchaseId).Distinct().ToList();
+            string preferredIds=string.Join(",",sourcePurchaseIds);
+            using(var q=c.CreateCommand())
+            {
+                q.Transaction=tx;
+                q.CommandText=$"SELECT Id,RemainingAmount FROM Purchases WHERE SupplierId=$s AND RemainingAmount>0 ORDER BY CASE WHEN Id IN ({preferredIds}) THEN 0 ELSE 1 END,CreatedAt,Id";
+                q.Parameters.AddWithValue("$s",supplierId); using var rr=q.ExecuteReader();
+                while(rr.Read()) invoices.Add((rr.GetInt64(0),Dec(rr.GetValue(1))));
+            }
+            foreach(var inv in invoices)
+            {
+                if(creditLeft<=0.005m)break;
+                decimal part=Math.Min(creditLeft,inv.Remaining);
+                using var upd=c.CreateCommand(); upd.Transaction=tx;
+                upd.CommandText="UPDATE Purchases SET TotalAmount=MAX(0,TotalAmount-$a),PaidAmount=MIN(PaidAmount,MAX(0,TotalAmount-$a)),RemainingAmount=MAX(0,RemainingAmount-$a) WHERE Id=$id";
+                upd.Parameters.AddWithValue("$a",part); upd.Parameters.AddWithValue("$id",inv.Id); upd.ExecuteNonQuery();
+                creditLeft-=part;
+            }
+            // Any amount left after clearing supplier invoices remains as a credit balance
+            // owned by the shop; it is never posted as cash or treasury income.
+            decimal supplierCreditBalance = Math.Max(0m,creditLeft);
+            if(supplierCreditBalance>0.005m)
+            {
+                using var credit=c.CreateCommand(); credit.Transaction=tx;
+                credit.CommandText=@"INSERT INTO SupplierCredits(SupplierId,SourceReturnId,OriginalAmount,RemainingAmount,CreatedAt,Note)
+VALUES($s,$r,$a,$a,$d,$n)";
+                credit.Parameters.AddWithValue("$s",supplierId);
+                credit.Parameters.AddWithValue("$r",returnId);
+                credit.Parameters.AddWithValue("$a",supplierCreditBalance);
+                credit.Parameters.AddWithValue("$d",DateTime.Now.ToString("O",CultureInfo.InvariantCulture));
+                credit.Parameters.AddWithValue("$n",$"رصيد دائن من مرتجع مشتريات رقم {returnId}");
+                credit.ExecuteNonQuery();
+            }
+            AppDatabase.AddAuditLog(c,tx,userName,"مرتجع شراء","مرتجع مورد",returnId,
+                $"المورد: {supplierId} | القيمة: {total:F2} | خصم مديونية قائمة: {total-supplierCreditBalance:F2} | رصيد دائن مرحل: {supplierCreditBalance:F2} | لا يوجد رد نقدي للخزنة");
+            tx.Commit();
+            return (returnId,total,total-supplierCreditBalance,0m,supplierCreditBalance);
+        }
     }
 
     public static void PaySupplier(string userName, long supplierId, decimal amount, string? note)
@@ -589,20 +1177,6 @@ COALESCE((SELECT SUM(ri.Quantity) FROM SalesReturnItems ri WHERE ri.OriginalTran
  t.RequiredAmount, t.PurchaseCostTotal
 FROM Transactions t LEFT JOIN Products p ON p.Id=t.ProductId
 WHERE t.TransactionType='SALE' AND t.ProductId IS NOT NULL
-AND (
-    COALESCE(t.RemainingAmount,0)<=0 OR
-    (t.CustomerId IS NOT NULL AND
-      COALESCE((SELECT SUM(CASE WHEN d.Type='DEBT' THEN d.Amount ELSE -d.Amount END)
-                FROM Debts_History d WHERE d.CustomerId=t.CustomerId),0)
-      + COALESCE((SELECT SUM(COALESCE(old.RemainingAmount,0))
-                  FROM Transactions old
-                  WHERE old.CustomerId=t.CustomerId
-                    AND old.TransactionType IN ('SALE','COPY','SERVICE')
-                    AND COALESCE(old.RemainingAmount,0)>0
-                    AND NOT EXISTS (SELECT 1 FROM Debts_History od
-                                    WHERE od.TransactionId=old.Id AND od.Type='DEBT')),0) <= 0.005
-    )
-)
 AND ( $q='' OR COALESCE(p.Name,t.Description) LIKE $p OR t.Description LIKE $p )
 ORDER BY t.CreatedAt DESC,t.Id DESC LIMIT 300";
         cmd.Parameters.AddWithValue("$q", q); cmd.Parameters.AddWithValue("$p", "%" + q + "%");
@@ -621,7 +1195,7 @@ ORDER BY t.CreatedAt DESC,t.Id DESC LIMIT 300";
         return result.Where(x => x.AvailableQuantity > 0).ToList();
     }
 
-    public static (long ReturnId, decimal Refund) RecordSaleReturn(string userName, long transactionId, int quantity, string reason)
+    public static (long ReturnId, decimal Refund, decimal DebtOffset, decimal CashRefund) RecordSaleReturn(string userName, long transactionId, int quantity, string reason)
     {
         if (quantity <= 0) throw new ArgumentOutOfRangeException(nameof(quantity));
         if (string.IsNullOrWhiteSpace(reason)) throw new ArgumentException("سبب المرتجع مطلوب.");
@@ -663,12 +1237,9 @@ WHERE t.Id=$id AND t.TransactionType='SALE' LIMIT 1";
             alreadyReturnedCost = Dec(r.GetValue(8));
             originalRemainingDebt = Dec(r.GetValue(9));
         }
-        if (originalRemainingDebt > 0.005m)
-        {
-            decimal currentCustomerDebt = customerId.HasValue ? AppDatabase.GetCustomerDebt(c, customerId.Value, tx) : originalRemainingDebt;
-            if (currentCustomerDebt > 0.005m)
-                throw new InvalidOperationException("لا يمكن رد العملية قبل تسوية رصيد العميل بالكامل؛ لأن النظام القديم يسجل دفعات العميل على الحساب ككل وليس على فاتورة بعينها.");
-        }
+        decimal currentCustomerDebt = customerId.HasValue
+            ? AppDatabase.GetCustomerDebt(c, customerId.Value, tx)
+            : 0m;
         int available = soldQuantity - alreadyReturned;
         if (quantity > available)
             throw new InvalidOperationException($"المتاح للإرجاع {Math.Max(0, available)} من أصل {soldQuantity}.");
@@ -715,12 +1286,69 @@ VALUES($r,$t,$p,$q,$a,$cost,$name)";
         }
         RecordInventoryMovement(c, tx, userId, productId, "SALE_RETURN", quantity, returnedCost.HasValue ? returnedCost.Value / quantity : null,
             "SalesReturn", returnId, $"مرتجع من عملية البيع #{transactionId} — {reason.Trim()}");
-        AppDatabase.AddTreasury(c, userName, "OUT", "مرتجعات مبيعات", refund,
-            $"مرتجع للصنف {productName} — العملية الأصلية #{transactionId}", "SalesReturn", returnId, tx, "SALES");
+        decimal debtOffset = Math.Min(refund, currentCustomerDebt);
+        decimal cashRefund = Math.Max(0m, refund - debtOffset);
+        if (customerId.HasValue && debtOffset > 0.005m)
+        {
+            // ترحيل رصيد الفاتورة القديمة إلى سجل الديون إذا لم يكن لها قيد DEBT،
+            // حتى لا يتكرر احتساب RemainingAmount بعد بدء استخدام سجل التسويات.
+            using (var legacyDebt = c.CreateCommand())
+            {
+                legacyDebt.Transaction = tx;
+                legacyDebt.CommandText = @"SELECT COUNT(*) FROM Debts_History WHERE TransactionId=$id AND Type='DEBT'";
+                legacyDebt.Parameters.AddWithValue("$id", transactionId);
+                bool hasDebtEntry = Convert.ToInt64(legacyDebt.ExecuteScalar() ?? 0, CultureInfo.InvariantCulture) > 0;
+                if (originalRemainingDebt > 0.005m && !hasDebtEntry)
+                {
+                    using var addLegacy = c.CreateCommand();
+                    addLegacy.Transaction = tx;
+                    addLegacy.CommandText = @"INSERT INTO Debts_History(CustomerId,TransactionId,UserId,Type,Amount,BalanceAfter,Note,CreatedAt)
+VALUES($customer,$transaction,$user,'DEBT',$amount,$balance,$note,$created)";
+                    addLegacy.Parameters.AddWithValue("$customer", customerId.Value);
+                    addLegacy.Parameters.AddWithValue("$transaction", transactionId);
+                    addLegacy.Parameters.AddWithValue("$user", userId);
+                    addLegacy.Parameters.AddWithValue("$amount", originalRemainingDebt);
+                    addLegacy.Parameters.AddWithValue("$balance", currentCustomerDebt);
+                    addLegacy.Parameters.AddWithValue("$note", "ترحيل رصيد فاتورة قديمة قبل تسوية مرتجع");
+                    addLegacy.Parameters.AddWithValue("$created", DateTime.Now.ToString("O", CultureInfo.InvariantCulture));
+                    addLegacy.ExecuteNonQuery();
+                }
+            }
+
+            decimal newDebtBalance = Math.Max(0m, currentCustomerDebt - debtOffset);
+            using (var settleDebt = c.CreateCommand())
+            {
+                settleDebt.Transaction = tx;
+                settleDebt.CommandText = @"INSERT INTO Debts_History(CustomerId,TransactionId,UserId,Type,Amount,BalanceAfter,Note,CreatedAt)
+VALUES($customer,NULL,$user,'PAYMENT',$amount,$balance,$note,$created)";
+                settleDebt.Parameters.AddWithValue("$customer", customerId.Value);
+                settleDebt.Parameters.AddWithValue("$user", userId);
+                settleDebt.Parameters.AddWithValue("$amount", debtOffset);
+                settleDebt.Parameters.AddWithValue("$balance", newDebtBalance);
+                settleDebt.Parameters.AddWithValue("$note", $"تسوية من مرتجع مبيعات رقم {returnId} للعملية الأصلية #{transactionId}");
+                settleDebt.Parameters.AddWithValue("$created", DateTime.Now.ToString("O", CultureInfo.InvariantCulture));
+                settleDebt.ExecuteNonQuery();
+            }
+
+            // تحديث المتبقي على الفاتورة الأصلية بقدر الجزء الذي تمت تسويته منها.
+            decimal invoiceOffset = Math.Min(originalRemainingDebt, debtOffset);
+            if (invoiceOffset > 0.005m)
+            {
+                using var updateInvoiceDebt = c.CreateCommand();
+                updateInvoiceDebt.Transaction = tx;
+                updateInvoiceDebt.CommandText = "UPDATE Transactions SET RemainingAmount=MAX(0,COALESCE(RemainingAmount,0)-$amount) WHERE Id=$id";
+                updateInvoiceDebt.Parameters.AddWithValue("$amount", invoiceOffset);
+                updateInvoiceDebt.Parameters.AddWithValue("$id", transactionId);
+                updateInvoiceDebt.ExecuteNonQuery();
+            }
+        }
+        if (cashRefund > 0.005m)
+            AppDatabase.AddTreasury(c, userName, "OUT", "مرتجعات مبيعات", cashRefund,
+                $"رد نقدي لمرتجع الصنف {productName} — العملية الأصلية #{transactionId}", "SalesReturn", returnId, tx, "SALES");
         AppDatabase.AddAuditLog(c, tx, userName, "إرجاع", "مرتجع مبيعات", returnId,
             $"العملية الأصلية: {transactionId} | الصنف: {productName} | الكمية: {quantity} | المبلغ: {refund:F2} | السبب: {reason.Trim()}");
         tx.Commit();
-        return (returnId, refund);
+        return (returnId, refund, debtOffset, cashRefund);
     }
 
     public static ProfitSnapshot CalculateProfit(DateTime from, DateTime to)
@@ -784,6 +1412,28 @@ AND Category IN ('فاتورة كهرباء','فاتورة مياه','فاتور
             cmd.CommandText = "SELECT COALESCE(SUM(Price),0) FROM PrintLog WHERE substr(Timestamp,1,10)>=$a AND substr(Timestamp,1,10)<$b";
             cmd.Parameters.AddWithValue("$a", start); cmd.Parameters.AddWithValue("$b", end); printRevenue = Dec(cmd.ExecuteScalar() ?? 0m);
         }
+        var printingBreakdown = new List<ProfitPrintingCategoryRow>();
+        using (var cmd = c.CreateCommand())
+        {
+            cmd.CommandText = @"SELECT COALESCE(NULLIF(PricingCategory,''),'غير محدد'),
+COALESCE(ColorType,'غير محدد'),COALESCE(DuplexMode,'غير محدد'),
+COUNT(*),COALESCE(SUM(Pages * Copies),0),COALESCE(SUM(PhysicalSheets),0),COALESCE(SUM(Price),0)
+FROM PrintLog
+WHERE substr(Timestamp,1,10)>=$a AND substr(Timestamp,1,10)<$b
+GROUP BY COALESCE(NULLIF(PricingCategory,''),'غير محدد'),COALESCE(ColorType,'غير محدد'),COALESCE(DuplexMode,'غير محدد')
+ORDER BY SUM(Price) DESC";
+            cmd.Parameters.AddWithValue("$a", start); cmd.Parameters.AddWithValue("$b", end);
+            using var r = cmd.ExecuteReader();
+            while (r.Read()) printingBreakdown.Add(new ProfitPrintingCategoryRow
+            {
+                Category = r.GetString(0), ColorType = r.GetString(1), DuplexMode = r.GetString(2),
+                Jobs = Convert.ToInt32(r.GetValue(3), CultureInfo.InvariantCulture),
+                Faces = Convert.ToInt32(r.GetValue(4), CultureInfo.InvariantCulture),
+                Sheets = Convert.ToInt32(r.GetValue(5), CultureInfo.InvariantCulture),
+                Revenue = Dec(r.GetValue(6))
+            });
+        }
+
         var productBreakdown = new List<ProfitProductRow>();
         using (var cmd = c.CreateCommand())
         {
@@ -838,7 +1488,8 @@ GROUP BY u.UserName ORDER BY SUM(t.RequiredAmount) DESC";
             CashServiceCommissions = cashCommission, OtherServiceCommissions = serviceCommission,
             OperatingExpenses = expenses, PrintingRevenue = printRevenue,
             UncostedLegacySales = uncosted, UncostedReturns = uncostedReturns, UncostedLegacyCount = uncostedCount,
-            ProductBreakdown = productBreakdown, EmployeeBreakdown = employeeBreakdown
+            ProductBreakdown = productBreakdown, EmployeeBreakdown = employeeBreakdown,
+            PrintingBreakdown = printingBreakdown
         };
     }
 
@@ -889,4 +1540,35 @@ internal sealed class PurchaseLineInput
     public long ProductId { get; init; }
     public int Quantity { get; init; }
     public decimal UnitCost { get; init; }
+}
+
+internal sealed class PurchaseReturnableItemRow
+{
+    public long PurchaseItemId { get; init; }
+    public long PurchaseId { get; init; }
+    public long ProductId { get; init; }
+    public string ProductName { get; init; } = "";
+    public int PurchasedQuantity { get; init; }
+    public int ReturnedQuantity { get; init; }
+    public int UnreturnedQuantity { get; init; }
+    public int AvailableQuantity { get; set; }
+    public decimal UnitCost { get; init; }
+    public string InvoiceNumber { get; init; } = "";
+    public DateTime PurchaseDate { get; init; }
+}
+internal sealed class PurchaseReturnLineInput
+{
+    public long PurchaseItemId { get; init; }
+    public int Quantity { get; init; }
+}
+
+internal sealed class PurchaseReturnArchiveRow
+{
+    public long Id { get; init; }
+    public DateTime CreatedAt { get; init; }
+    public string SupplierName { get; init; } = "";
+    public decimal Total { get; init; }
+    public decimal CashRefund { get; init; }
+    public string Reason { get; init; } = "";
+    public string Products { get; init; } = "";
 }
