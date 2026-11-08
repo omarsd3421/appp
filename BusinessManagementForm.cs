@@ -72,6 +72,9 @@ internal sealed class BusinessManagementForm : Form
         LoadPurchaseProducts("");
         LoadReturnRows();
         LoadInvoiceRows();
+        LoadPurchaseArchive();
+        LoadReturnArchive();
+        LoadSupplierPayments();
         LoadStockHistory();
         InputFocusHelper.Apply(this);
     }
