@@ -58,6 +58,8 @@ namespace LibraryPrintApp
             }
 
             ApplicationConfiguration.Initialize();
+            // توحيد سلوك Esc في النوافذ المنبثقة على مستوى البرنامج كله.
+            Application.AddMessageFilter(new ModalEscapeMessageFilter());
             AppLog.InstallGlobalHandlers();
 
             try
@@ -136,5 +138,50 @@ namespace LibraryPrintApp
                     MessageBoxIcon.Error);
             }
         }
+    }
+}
+
+
+internal sealed class ModalEscapeMessageFilter : IMessageFilter
+{
+    private const int WmKeyDown = 0x0100;
+    private const int VkEscape = 0x1B;
+
+    public bool PreFilterMessage(ref Message m)
+    {
+        if (m.Msg != WmKeyDown || (int)m.WParam != VkEscape)
+            return false;
+
+        Form? active = Form.ActiveForm;
+        if (active == null || active.IsDisposed || !active.Modal)
+            return false;
+
+        Control? control = GetDeepActiveControl(active);
+        if (control is ComboBox combo && combo.DroppedDown)
+        {
+            combo.DroppedDown = false;
+            return true;
+        }
+        if (control is DataGridView grid && grid.IsCurrentCellInEditMode)
+        {
+            grid.CancelEdit();
+            return true;
+        }
+        if (control is TextBoxBase text && text.SelectionLength > 0)
+        {
+            text.SelectionLength = 0;
+            return true;
+        }
+
+        active.Close();
+        return true;
+    }
+
+    private static Control? GetDeepActiveControl(Control parent)
+    {
+        Control? current = parent;
+        while (current is ContainerControl container && container.ActiveControl != null)
+            current = container.ActiveControl;
+        return current;
     }
 }
