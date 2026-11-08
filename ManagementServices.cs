@@ -905,20 +905,6 @@ COALESCE((SELECT SUM(ri.Quantity) FROM SalesReturnItems ri WHERE ri.OriginalTran
  t.RequiredAmount, t.PurchaseCostTotal
 FROM Transactions t LEFT JOIN Products p ON p.Id=t.ProductId
 WHERE t.TransactionType='SALE' AND t.ProductId IS NOT NULL
-AND (
-    COALESCE(t.RemainingAmount,0)<=0 OR
-    (t.CustomerId IS NOT NULL AND
-      COALESCE((SELECT SUM(CASE WHEN d.Type='DEBT' THEN d.Amount ELSE -d.Amount END)
-                FROM Debts_History d WHERE d.CustomerId=t.CustomerId),0)
-      + COALESCE((SELECT SUM(COALESCE(old.RemainingAmount,0))
-                  FROM Transactions old
-                  WHERE old.CustomerId=t.CustomerId
-                    AND old.TransactionType IN ('SALE','COPY','SERVICE')
-                    AND COALESCE(old.RemainingAmount,0)>0
-                    AND NOT EXISTS (SELECT 1 FROM Debts_History od
-                                    WHERE od.TransactionId=old.Id AND od.Type='DEBT')),0) <= 0.005
-    )
-)
 AND ( $q='' OR COALESCE(p.Name,t.Description) LIKE $p OR t.Description LIKE $p )
 ORDER BY t.CreatedAt DESC,t.Id DESC LIMIT 300";
         cmd.Parameters.AddWithValue("$q", q); cmd.Parameters.AddWithValue("$p", "%" + q + "%");
@@ -937,7 +923,7 @@ ORDER BY t.CreatedAt DESC,t.Id DESC LIMIT 300";
         return result.Where(x => x.AvailableQuantity > 0).ToList();
     }
 
-    public static (long ReturnId, decimal Refund) RecordSaleReturn(string userName, long transactionId, int quantity, string reason)
+    public static (long ReturnId, decimal Refund, decimal DebtOffset, decimal CashRefund) RecordSaleReturn(string userName, long transactionId, int quantity, string reason)
     {
         if (quantity <= 0) throw new ArgumentOutOfRangeException(nameof(quantity));
         if (string.IsNullOrWhiteSpace(reason)) throw new ArgumentException("سبب المرتجع مطلوب.");
@@ -979,12 +965,9 @@ WHERE t.Id=$id AND t.TransactionType='SALE' LIMIT 1";
             alreadyReturnedCost = Dec(r.GetValue(8));
             originalRemainingDebt = Dec(r.GetValue(9));
         }
-        if (originalRemainingDebt > 0.005m)
-        {
-            decimal currentCustomerDebt = customerId.HasValue ? AppDatabase.GetCustomerDebt(c, customerId.Value, tx) : originalRemainingDebt;
-            if (currentCustomerDebt > 0.005m)
-                throw new InvalidOperationException("لا يمكن رد العملية قبل تسوية رصيد العميل بالكامل؛ لأن النظام القديم يسجل دفعات العميل على الحساب ككل وليس على فاتورة بعينها.");
-        }
+        decimal currentCustomerDebt = customerId.HasValue
+            ? AppDatabase.GetCustomerDebt(c, customerId.Value, tx)
+            : 0m;
         int available = soldQuantity - alreadyReturned;
         if (quantity > available)
             throw new InvalidOperationException($"المتاح للإرجاع {Math.Max(0, available)} من أصل {soldQuantity}.");
@@ -1031,12 +1014,69 @@ VALUES($r,$t,$p,$q,$a,$cost,$name)";
         }
         RecordInventoryMovement(c, tx, userId, productId, "SALE_RETURN", quantity, returnedCost.HasValue ? returnedCost.Value / quantity : null,
             "SalesReturn", returnId, $"مرتجع من عملية البيع #{transactionId} — {reason.Trim()}");
-        AppDatabase.AddTreasury(c, userName, "OUT", "مرتجعات مبيعات", refund,
-            $"مرتجع للصنف {productName} — العملية الأصلية #{transactionId}", "SalesReturn", returnId, tx, "SALES");
+        decimal debtOffset = Math.Min(refund, currentCustomerDebt);
+        decimal cashRefund = Math.Max(0m, refund - debtOffset);
+        if (customerId.HasValue && debtOffset > 0.005m)
+        {
+            // ترحيل رصيد الفاتورة القديمة إلى سجل الديون إذا لم يكن لها قيد DEBT،
+            // حتى لا يتكرر احتساب RemainingAmount بعد بدء استخدام سجل التسويات.
+            using (var legacyDebt = c.CreateCommand())
+            {
+                legacyDebt.Transaction = tx;
+                legacyDebt.CommandText = @"SELECT COUNT(*) FROM Debts_History WHERE TransactionId=$id AND Type='DEBT'";
+                legacyDebt.Parameters.AddWithValue("$id", transactionId);
+                bool hasDebtEntry = Convert.ToInt64(legacyDebt.ExecuteScalar() ?? 0, CultureInfo.InvariantCulture) > 0;
+                if (originalRemainingDebt > 0.005m && !hasDebtEntry)
+                {
+                    using var addLegacy = c.CreateCommand();
+                    addLegacy.Transaction = tx;
+                    addLegacy.CommandText = @"INSERT INTO Debts_History(CustomerId,TransactionId,UserId,Type,Amount,BalanceAfter,Note,CreatedAt)
+VALUES($customer,$transaction,$user,'DEBT',$amount,$balance,$note,$created)";
+                    addLegacy.Parameters.AddWithValue("$customer", customerId.Value);
+                    addLegacy.Parameters.AddWithValue("$transaction", transactionId);
+                    addLegacy.Parameters.AddWithValue("$user", userId);
+                    addLegacy.Parameters.AddWithValue("$amount", originalRemainingDebt);
+                    addLegacy.Parameters.AddWithValue("$balance", currentCustomerDebt);
+                    addLegacy.Parameters.AddWithValue("$note", "ترحيل رصيد فاتورة قديمة قبل تسوية مرتجع");
+                    addLegacy.Parameters.AddWithValue("$created", DateTime.Now.ToString("O", CultureInfo.InvariantCulture));
+                    addLegacy.ExecuteNonQuery();
+                }
+            }
+
+            decimal newDebtBalance = Math.Max(0m, currentCustomerDebt - debtOffset);
+            using (var settleDebt = c.CreateCommand())
+            {
+                settleDebt.Transaction = tx;
+                settleDebt.CommandText = @"INSERT INTO Debts_History(CustomerId,TransactionId,UserId,Type,Amount,BalanceAfter,Note,CreatedAt)
+VALUES($customer,NULL,$user,'PAYMENT',$amount,$balance,$note,$created)";
+                settleDebt.Parameters.AddWithValue("$customer", customerId.Value);
+                settleDebt.Parameters.AddWithValue("$user", userId);
+                settleDebt.Parameters.AddWithValue("$amount", debtOffset);
+                settleDebt.Parameters.AddWithValue("$balance", newDebtBalance);
+                settleDebt.Parameters.AddWithValue("$note", $"تسوية من مرتجع مبيعات رقم {returnId} للعملية الأصلية #{transactionId}");
+                settleDebt.Parameters.AddWithValue("$created", DateTime.Now.ToString("O", CultureInfo.InvariantCulture));
+                settleDebt.ExecuteNonQuery();
+            }
+
+            // تحديث المتبقي على الفاتورة الأصلية بقدر الجزء الذي تمت تسويته منها.
+            decimal invoiceOffset = Math.Min(originalRemainingDebt, debtOffset);
+            if (invoiceOffset > 0.005m)
+            {
+                using var updateInvoiceDebt = c.CreateCommand();
+                updateInvoiceDebt.Transaction = tx;
+                updateInvoiceDebt.CommandText = "UPDATE Transactions SET RemainingAmount=MAX(0,COALESCE(RemainingAmount,0)-$amount) WHERE Id=$id";
+                updateInvoiceDebt.Parameters.AddWithValue("$amount", invoiceOffset);
+                updateInvoiceDebt.Parameters.AddWithValue("$id", transactionId);
+                updateInvoiceDebt.ExecuteNonQuery();
+            }
+        }
+        if (cashRefund > 0.005m)
+            AppDatabase.AddTreasury(c, userName, "OUT", "مرتجعات مبيعات", cashRefund,
+                $"رد نقدي لمرتجع الصنف {productName} — العملية الأصلية #{transactionId}", "SalesReturn", returnId, tx, "SALES");
         AppDatabase.AddAuditLog(c, tx, userName, "إرجاع", "مرتجع مبيعات", returnId,
             $"العملية الأصلية: {transactionId} | الصنف: {productName} | الكمية: {quantity} | المبلغ: {refund:F2} | السبب: {reason.Trim()}");
         tx.Commit();
-        return (returnId, refund);
+        return (returnId, refund, debtOffset, cashRefund);
     }
 
     public static ProfitSnapshot CalculateProfit(DateTime from, DateTime to)
