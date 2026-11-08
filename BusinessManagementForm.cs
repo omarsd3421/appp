@@ -204,9 +204,137 @@ internal sealed class BusinessManagementForm : Form
         var del = UiKit.Button("حذف السطر المحدد", UiKit.Danger, 145, 40); del.Click += (_, _) => RemovePurchaseLine(); footer.Controls.Add(del);
         var save = UiKit.Button("💾 حفظ فاتورة الشراء وتحديث المخزن", Color.FromArgb(0, 121, 107), 260, 42); save.Click += (_, _) => SavePurchase(); footer.Controls.Add(save);
         var clear = UiKit.Button("تفريغ", Color.FromArgb(108, 117, 125), 90, 40); clear.Click += (_, _) => ClearPurchase(); footer.Controls.Add(clear);
+        var supplierReturn = UiKit.Button("↩ مرتجع للمورد", UiKit.Danger, 165, 42); supplierReturn.Click += (_, _) => ShowPurchaseReturnDialog(); footer.Controls.Add(supplierReturn);
         root.Controls.Add(footer, 0, 3);
         page.Controls.Add(root);
         return page;
+    }
+
+
+    private void ShowPurchaseReturnDialog()
+    {
+        using var dialog = new Form
+        {
+            Text = "مرتجع مشتريات إلى المورد",
+            StartPosition = FormStartPosition.CenterParent,
+            Size = new Size(1120, 700), MinimumSize = new Size(900, 580),
+            RightToLeft = RightToLeft.Yes, RightToLeftLayout = true,
+            Font = new Font("Segoe UI", 10F), BackColor = UiKit.Background
+        };
+        EnableEscapeClose(dialog);
+        var root = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 4, Padding = new Padding(12) };
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 64));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 54));
+        root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 68));
+        var top = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, WrapContents = false };
+        var supplier = new ComboBox { Width = 260, DropDownStyle = ComboBoxStyle.DropDownList, Font = new Font("Segoe UI", 10F) };
+        foreach (var item in BusinessManagementStore.LoadSuppliers()) supplier.Items.Add(item);
+        if (supplier.Items.Count > 0) supplier.SelectedIndex = 0;
+        var invoice = new ComboBox { Width = 280, DropDownStyle = ComboBoxStyle.DropDownList, Font = new Font("Segoe UI", 10F) };
+        var reason = new TextBox { Width = 250, PlaceholderText = "سبب/ملاحظة المرتجع" };
+        top.Controls.Add(LabeledControl("المورد", supplier, 290));
+        top.Controls.Add(LabeledControl("الفاتورة", invoice, 310));
+        top.Controls.Add(LabeledControl("ملاحظات", reason, 270));
+        root.Controls.Add(top, 0, 0);
+        var hint = MakeHint("اختر «كل فواتير المورد» لإرجاع المتبقي من عدة فواتير مرة واحدة، أو اختر فاتورة بعينها. الكميات المتاحة محسوبة بعد المرتجعات السابقة ومحدودة برصيد المخزون الحالي حتى لا نرجع كتبًا تم بيعها.");
+        root.Controls.Add(hint, 0, 1);
+        var grid = new DataGridView { Dock = DockStyle.Fill, AllowUserToAddRows = false, AllowUserToDeleteRows = false, MultiSelect = false, SelectionMode = DataGridViewSelectionMode.CellSelect, AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill };
+        StyleBusinessGrid(grid);
+        grid.Columns.Add(new DataGridViewTextBoxColumn { Name="PurchaseItemId", Visible=false });
+        grid.Columns.Add(new DataGridViewTextBoxColumn { Name="PurchaseId", Visible=false });
+        grid.Columns.Add(UiKit.GridText("Invoice","فاتورة الشراء",120));
+        grid.Columns.Add(UiKit.GridText("Date","تاريخ الشراء",130));
+        grid.Columns.Add(UiKit.GridText("Product","الصنف",250));
+        grid.Columns.Add(UiKit.GridText("Purchased","المشتَرى",80));
+        grid.Columns.Add(UiKit.GridText("Available","المتاح للرد",90));
+        grid.Columns.Add(UiKit.GridText("Cost","تكلفة الوحدة",100));
+        var qtyCol = new DataGridViewTextBoxColumn { Name="ReturnQty", HeaderText="كمية المرتجع", FillWeight=90 };
+        grid.Columns.Add(qtyCol);
+        root.Controls.Add(grid, 0, 2);
+        var footer = new FlowLayoutPanel { Dock=DockStyle.Fill, FlowDirection=FlowDirection.RightToLeft, WrapContents=false, Padding=new Padding(3) };
+        var totalLabel = new Label { AutoSize=true, Text="إجمالي المرتجع: 0.00 ج.م", Font=new Font("Segoe UI",11F,FontStyle.Bold), ForeColor=UiKit.Text, Padding=new Padding(8,10,8,0) };
+        var refresh = UiKit.Button("تحديث الأصناف", UiKit.Primary, 130, 40);
+        var save = UiKit.Button("تأكيد مرتجع المورد", UiKit.Danger, 190, 42);
+        var close = UiKit.Button("إغلاق", Color.FromArgb(108,117,125), 100, 40);
+        footer.Controls.Add(totalLabel); footer.Controls.Add(refresh); footer.Controls.Add(save); footer.Controls.Add(close);
+        root.Controls.Add(footer,0,3);
+        dialog.Controls.Add(root);
+        void LoadInvoiceChoices()
+        {
+            invoice.Items.Clear();
+            invoice.Items.Add(new PurchaseInvoiceChoice(null,"كل فواتير المورد"));
+            if(supplier.SelectedItem is SupplierLookupRow selected)
+                foreach(var p in BusinessManagementStore.LoadPurchaseArchiveRows("",selected.Id))
+                    invoice.Items.Add(new PurchaseInvoiceChoice(p.Id,$"#{p.Id} — {p.InvoiceNumber} — {p.CreatedAt:yyyy-MM-dd}"));
+            invoice.SelectedIndex=0;
+        }
+        void LoadRows()
+        {
+            grid.Rows.Clear(); totalLabel.Text="إجمالي المرتجع: 0.00 ج.م";
+            if(supplier.SelectedItem is not SupplierLookupRow selected) return;
+            long? purchaseId=(invoice.SelectedItem as PurchaseInvoiceChoice)?.PurchaseId;
+            foreach(var item in BusinessManagementStore.LoadReturnablePurchaseItems(selected.Id,purchaseId))
+                grid.Rows.Add(item.PurchaseItemId,item.PurchaseId,
+                    string.IsNullOrWhiteSpace(item.InvoiceNumber)?"#"+item.PurchaseId:item.InvoiceNumber,
+                    item.PurchaseDate.ToString("yyyy-MM-dd"),item.ProductName,item.PurchasedQuantity,
+                    item.AvailableQuantity,item.UnitCost.ToString("N2"),0);
+        }
+        void Recalc()
+        {
+            decimal total=0m;
+            foreach(DataGridViewRow row in grid.Rows)
+            {
+                int qty=0; int.TryParse(Convert.ToString(row.Cells["ReturnQty"].Value),out qty);
+                decimal cost=0m; decimal.TryParse(Convert.ToString(row.Cells["Cost"].Value),NumberStyles.Any,CultureInfo.CurrentCulture,out cost);
+                total+=Math.Max(0,qty)*cost;
+            }
+            totalLabel.Text=$"إجمالي المرتجع: {total:N2} ج.م";
+        }
+        supplier.SelectedIndexChanged += (_,_)=>{LoadInvoiceChoices();LoadRows();};
+        invoice.SelectedIndexChanged += (_,_)=>LoadRows();
+        grid.CellValueChanged += (_,_)=>Recalc();
+        grid.CurrentCellDirtyStateChanged += (_,_)=>{if(grid.IsCurrentCellDirty)grid.CommitEdit(DataGridViewDataErrorContexts.Commit);};
+        refresh.Click += (_,_)=>LoadRows();
+        close.Click += (_,_)=>dialog.Close();
+        save.Click += (_,_) =>
+        {
+            try
+            {
+                grid.EndEdit();
+                if(supplier.SelectedItem is not SupplierLookupRow selected) throw new InvalidOperationException("اختر المورد أولًا.");
+                var lines=new List<PurchaseReturnLineInput>();
+                foreach(DataGridViewRow row in grid.Rows)
+                {
+                    int qty=0; int.TryParse(Convert.ToString(row.Cells["ReturnQty"].Value),out qty);
+                    if(qty<=0) continue;
+                    int available=Convert.ToInt32(row.Cells["Available"].Value,CultureInfo.InvariantCulture);
+                    if(qty>available) throw new InvalidOperationException($"كمية مرتجع ({row.Cells["Product"].Value}) أكبر من المتاح ({available}).");
+                    lines.Add(new PurchaseReturnLineInput { PurchaseItemId=Convert.ToInt64(row.Cells["PurchaseItemId"].Value,CultureInfo.InvariantCulture), Quantity=qty });
+                }
+                if(lines.Count==0) throw new InvalidOperationException("اكتب كمية مرتجع لصنف واحد على الأقل.");
+                var confirm=MessageBox.Show(dialog,"سيتم خصم الكميات من المخزون وتسوية قيمة المرتجع مع رصيد المورد، وأي فائض مستحق من المورد سيُسجل كإيراد نقدي. هل تريد المتابعة؟","تأكيد مرتجع المشتريات",MessageBoxButtons.YesNo,MessageBoxIcon.Warning);
+                if(confirm!=DialogResult.Yes)return;
+                var result=BusinessManagementStore.RecordPurchaseReturn(currentUser,selected.Id,lines,reason.Text);
+                LoadSuppliers(); LoadPurchaseArchive(); LoadStockHistory();
+                MessageBox.Show(dialog,$"تم تسجيل مرتجع المورد رقم {result.ReturnId}.\nإجمالي المرتجع: {result.Total:N2} ج.م\nالمخصوم من حساب المورد: {result.SupplierCredit:N2} ج.م\nالمستلم نقدًا من المورد: {result.CashRefund:N2} ج.م","تم",MessageBoxButtons.OK,MessageBoxIcon.Information);
+                dialog.Close();
+            }
+            catch(Exception ex){AppLog.Error("تعذر تسجيل مرتجع مشتريات للمورد",ex);MessageBox.Show(dialog,ex.Message,"مرتجع المورد",MessageBoxButtons.OK,MessageBoxIcon.Error);}
+        };
+        LoadInvoiceChoices(); LoadRows();
+        dialog.ShowDialog(this);
+    }
+
+    private static void EnableEscapeClose(Form form)
+    {
+        form.KeyPreview = true;
+        form.KeyDown += (_, e) =>
+        {
+            if (e.KeyCode != Keys.Escape) return;
+            e.Handled = true; e.SuppressKeyPress = true;
+            form.Close();
+        };
     }
 
     private TabPage BuildReturnsTab()
@@ -585,6 +713,7 @@ FROM Purchases WHERE SupplierId=$s ORDER BY CreatedAt DESC,Id DESC LIMIT 300";
             RightToLeft = RightToLeft.Yes, RightToLeftLayout = true,
             Font = new Font("Segoe UI", 10F), BackColor = Color.White
         };
+        EnableEscapeClose(dialog);
         var root = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 4, Padding = new Padding(14) };
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 150));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 46));
@@ -707,6 +836,7 @@ FROM Purchases WHERE SupplierId=$s ORDER BY CreatedAt DESC,Id DESC LIMIT 300";
             Text = title, StartPosition = FormStartPosition.CenterParent, Size = new Size(760, 620),
             RightToLeft = RightToLeft.Yes, RightToLeftLayout = true, Font = new Font("Segoe UI", 10F), BackColor = Color.White
         };
+        EnableEscapeClose(form);
         var body = new TextBox { Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, WordWrap = true, Text = content, Font = new Font("Consolas", 10F), RightToLeft = RightToLeft.Yes };
         var close = UiKit.Button("إغلاق", Color.FromArgb(108, 117, 125), 110, 40);
         close.Dock = DockStyle.Bottom; close.Click += (_, _) => form.Close();
@@ -1309,3 +1439,11 @@ internal sealed class AdminPasswordPromptForm : Form
     }
 }
 
+
+internal sealed class PurchaseInvoiceChoice
+{
+    public long? PurchaseId { get; }
+    private readonly string label;
+    public PurchaseInvoiceChoice(long? purchaseId,string label){PurchaseId=purchaseId;this.label=label;}
+    public override string ToString()=>label;
+}
