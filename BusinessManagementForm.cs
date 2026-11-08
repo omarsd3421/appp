@@ -883,18 +883,8 @@ FROM Purchases WHERE SupplierId=$s ORDER BY CreatedAt DESC,Id DESC LIMIT 300";
             bool inventoryTable = HasTable("InventoryMovements");
             bool treasuryTable = HasTable("TreasuryMovements");
             long saleLines = Scalar("SELECT COUNT(*) FROM Transactions WHERE TransactionType='SALE' AND ProductId IS NOT NULL");
-            long debtBlocked = Scalar(@"SELECT COUNT(*) FROM Transactions t
-WHERE t.TransactionType='SALE' AND t.ProductId IS NOT NULL AND COALESCE(t.RemainingAmount,0)>0.005
-AND (t.CustomerId IS NULL OR
-COALESCE((SELECT SUM(CASE WHEN d.Type='DEBT' THEN d.Amount ELSE -d.Amount END)
-          FROM Debts_History d WHERE d.CustomerId=t.CustomerId),0)
-+ COALESCE((SELECT SUM(COALESCE(old.RemainingAmount,0))
-            FROM Transactions old
-            WHERE old.CustomerId=t.CustomerId
-              AND old.TransactionType IN ('SALE','COPY','SERVICE')
-              AND COALESCE(old.RemainingAmount,0)>0
-              AND NOT EXISTS (SELECT 1 FROM Debts_History od
-                              WHERE od.TransactionId=old.Id AND od.Type='DEBT')),0)>0.005)");
+            long creditSales = Scalar(@"SELECT COUNT(*) FROM Transactions
+WHERE TransactionType='SALE' AND ProductId IS NOT NULL AND COALESCE(RemainingAmount,0)>0.005");
             long openShift;
             using (var shift = c.CreateCommand())
             {
@@ -926,15 +916,19 @@ AND NOT EXISTS(SELECT 1 FROM InventoryMovements im WHERE im.ReferenceType='Sales
                 : 0;
             long missingTreasuryMovements = returnsTable && treasuryTable
                 ? Scalar(@"SELECT COUNT(*) FROM SalesReturns sr
-WHERE NOT EXISTS(SELECT 1 FROM TreasuryMovements tm WHERE tm.ReferenceType='SalesReturn' AND tm.ReferenceId=sr.Id)")
+WHERE sr.RefundAmount - COALESCE((
+    SELECT SUM(d.Amount) FROM Debts_History d
+    WHERE d.Type='PAYMENT' AND d.Note LIKE ('تسوية من مرتجع مبيعات رقم ' || sr.Id || '%')
+),0) > 0.005
+AND NOT EXISTS(SELECT 1 FROM TreasuryMovements tm WHERE tm.ReferenceType='SalesReturn' AND tm.ReferenceId=sr.Id)")
                 : 0;
 
             var issues = new List<string>();
             if (!returnsTable || !itemsTable) issues.Add("جداول المرتجعات غير مكتملة؛ يلزم تهيئة قاعدة البيانات.");
-            if (debtBlocked > 0)
-                issues.Add($"هناك {debtBlocked} عملية بيع آجل ما زال رصيد العميل عليها قائمًا؛ لن تظهر هذه العمليات كقابلة للإرجاع قبل تسوية دين العميل.");
-            if (openShift == 0)
-                issues.Add("لا يوجد شفت مفتوح للمستخدم الحالي اليوم؛ تسجيل رد المبلغ في الخزينة سيفشل حتى يتم فتح الشفت.");
+            if (creditSales > 0)
+                issues.Add($"يوجد {creditSales} عملية بيع آجل عليها رصيد؛ أصبحت هذه العمليات ظاهرة للإرجاع، وتُخصم قيمة المرتجع من دين العميل قبل أي رد نقدي.");
+            if (openShift == 0 && missingTreasuryMovements > 0)
+                issues.Add("لا يوجد شفت مفتوح للمستخدم الحالي؛ راجع المرتجعات التي تحتاج ردًا نقديًا وافتح الشفت قبل تسجيلها.");
             if (overReturnedLines > 0) issues.Add("يوجد سطر بيع تم إرجاع كمية أكبر من الكمية المباعة؛ راجع سجلات المرتجعات.");
             if (missingStockMovements > 0) issues.Add("بعض فواتير المرتجع لا يقابلها سجل حركة مخزون.");
             if (missingTreasuryMovements > 0) issues.Add("بعض فواتير المرتجع لا يقابلها سجل حركة خزينة.");
@@ -943,7 +937,7 @@ WHERE NOT EXISTS(SELECT 1 FROM TreasuryMovements tm WHERE tm.ReferenceType='Sale
             string report =
                 $"تشخيص المرتجعات — {DateTime.Now:yyyy-MM-dd HH:mm}\n\n" +
                 $"عمليات بيع أصناف مسجلة: {saleLines}\n" +
-                $"عمليات بيع محجوبة حاليًا بسبب دين العميل: {debtBlocked}\n" +
+                $"عمليات بيع آجلة عليها رصيد (متاحة الآن للبحث والإرجاع): {creditSales}\n" +
                 $"عمليات بيع متاحة للإرجاع في نتائج الشاشة (حتى 300): {availableLines}\n" +
                 $"الشفت المفتوح للمستخدم الحالي: {(openShift > 0 ? "نعم" : "لا")}\n" +
                 $"فواتير مرتجعات مسجلة: {returnDocuments}\n" +
