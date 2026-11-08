@@ -1013,9 +1013,12 @@ VALUES($r,$p,$pi,$prod,$n,$q,$c,$t)";
             }
             decimal creditLeft=total;
             var invoices=new List<(long Id,decimal Remaining)>();
+            var sourcePurchaseIds=validated.Select(x=>x.PurchaseId).Distinct().ToList();
+            string preferredIds=string.Join(",",sourcePurchaseIds);
             using(var q=c.CreateCommand())
             {
-                q.Transaction=tx; q.CommandText="SELECT Id,RemainingAmount FROM Purchases WHERE SupplierId=$s AND RemainingAmount>0 ORDER BY CreatedAt,Id";
+                q.Transaction=tx;
+                q.CommandText=$"SELECT Id,RemainingAmount FROM Purchases WHERE SupplierId=$s AND RemainingAmount>0 ORDER BY CASE WHEN Id IN ({preferredIds}) THEN 0 ELSE 1 END,CreatedAt,Id";
                 q.Parameters.AddWithValue("$s",supplierId); using var rr=q.ExecuteReader();
                 while(rr.Read()) invoices.Add((rr.GetInt64(0),Dec(rr.GetValue(1))));
             }
@@ -1024,7 +1027,7 @@ VALUES($r,$p,$pi,$prod,$n,$q,$c,$t)";
                 if(creditLeft<=0.005m)break;
                 decimal part=Math.Min(creditLeft,inv.Remaining);
                 using var upd=c.CreateCommand(); upd.Transaction=tx;
-                upd.CommandText="UPDATE Purchases SET TotalAmount=MAX(0,TotalAmount-$a),RemainingAmount=MAX(0,RemainingAmount-$a) WHERE Id=$id";
+                upd.CommandText="UPDATE Purchases SET TotalAmount=MAX(0,TotalAmount-$a),PaidAmount=MIN(PaidAmount,MAX(0,TotalAmount-$a)),RemainingAmount=MAX(0,RemainingAmount-$a) WHERE Id=$id";
                 upd.Parameters.AddWithValue("$a",part); upd.Parameters.AddWithValue("$id",inv.Id); upd.ExecuteNonQuery();
                 creditLeft-=part;
             }
