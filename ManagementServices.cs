@@ -1075,17 +1075,25 @@ VALUES($r,$p,$pi,$prod,$n,$q,$c,$t)";
                 upd.Parameters.AddWithValue("$a",part); upd.Parameters.AddWithValue("$id",inv.Id); upd.ExecuteNonQuery();
                 creditLeft-=part;
             }
-            decimal cashRefund=Math.Max(0m,creditLeft);
-            using(var upd=c.CreateCommand())
+            // Any amount left after clearing supplier invoices remains as a credit balance
+            // owned by the shop; it is never posted as cash or treasury income.
+            decimal supplierCreditBalance = Math.Max(0m,creditLeft);
+            if(supplierCreditBalance>0.005m)
             {
-                upd.Transaction=tx; upd.CommandText="UPDATE PurchaseReturns SET CashRefund=$cash WHERE Id=$id";
-                upd.Parameters.AddWithValue("$cash",cashRefund); upd.Parameters.AddWithValue("$id",returnId); upd.ExecuteNonQuery();
+                using var credit=c.CreateCommand(); credit.Transaction=tx;
+                credit.CommandText=@"INSERT INTO SupplierCredits(SupplierId,SourceReturnId,OriginalAmount,RemainingAmount,CreatedAt,Note)
+VALUES($s,$r,$a,$a,$d,$n)";
+                credit.Parameters.AddWithValue("$s",supplierId);
+                credit.Parameters.AddWithValue("$r",returnId);
+                credit.Parameters.AddWithValue("$a",supplierCreditBalance);
+                credit.Parameters.AddWithValue("$d",DateTime.Now.ToString("O",CultureInfo.InvariantCulture));
+                credit.Parameters.AddWithValue("$n",$"رصيد دائن من مرتجع مشتريات رقم {returnId}");
+                credit.ExecuteNonQuery();
             }
-            if(cashRefund>0.005m)
-                AppDatabase.AddTreasury(c,userName,"IN","رد مورد",cashRefund,$"رد نقدي من المورد مقابل مرتجع رقم {returnId}","PurchaseReturn",returnId,tx,"DRAWER");
-            AppDatabase.AddAuditLog(c,tx,userName,"مرتجع شراء","مرتجع مورد",returnId,$"المورد: {supplierId} | القيمة: {total:F2} | تسوية رصيد المورد: {total-cashRefund:F2} | نقدي مستلم: {cashRefund:F2}");
+            AppDatabase.AddAuditLog(c,tx,userName,"مرتجع شراء","مرتجع مورد",returnId,
+                $"المورد: {supplierId} | القيمة: {total:F2} | خصم مديونية قائمة: {total-supplierCreditBalance:F2} | رصيد دائن مرحل: {supplierCreditBalance:F2} | لا يوجد رد نقدي للخزنة");
             tx.Commit();
-            return (returnId,total,total-cashRefund,cashRefund);
+            return (returnId,total,total,0m);
         }
     }
 
