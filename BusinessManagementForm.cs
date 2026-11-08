@@ -130,7 +130,7 @@ internal sealed class BusinessManagementForm : Form
         supplierGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Id", Visible = false });
         supplierGrid.Columns.Add(UiKit.GridText("Name", "اسم المورد", 280));
         supplierGrid.Columns.Add(UiKit.GridText("Phone", "الهاتف", 180));
-        supplierGrid.Columns.Add(UiKit.GridText("Balance", "المستحق للمورد", 180));
+        supplierGrid.Columns.Add(UiKit.GridText("Balance", "صافي الحساب (السالب = لنا)", 180));
         supplierGrid.CellDoubleClick += (_, e) => { if (e.RowIndex >= 0) ShowSelectedSupplierDetails(); };
         layout.Controls.Add(supplierGrid, 0, 1);
 
@@ -797,7 +797,13 @@ internal sealed class BusinessManagementForm : Form
         {
             var suppliers = BusinessManagementStore.LoadSuppliers();
             supplierGrid.Rows.Clear();
-            foreach (var s in suppliers) supplierGrid.Rows.Add(s.Id, s.Name, s.Phone, s.Balance.ToString("N2") + " ج.م");
+            foreach (var s in suppliers)
+            {
+                int rowIndex = supplierGrid.Rows.Add(s.Id, s.Name, s.Phone, s.Balance.ToString("N2") + " ج.م");
+                supplierGrid.Rows[rowIndex].Cells["Balance"].ToolTipText = s.Balance < 0
+                    ? $"رصيد دائن لنا عند المورد: {Math.Abs(s.Balance):N2} ج.م"
+                    : $"المتبقي المستحق للمورد: {s.Balance:N2} ج.م";
+            }
             long? selected = purchaseSupplier.SelectedItem is SupplierLookupRow old ? old.Id : null;
             purchaseSupplier.Items.Clear();
             foreach (var s in suppliers) purchaseSupplier.Items.Add(s);
@@ -911,7 +917,7 @@ FROM Purchases WHERE SupplierId=$s ORDER BY CreatedAt DESC,Id DESC LIMIT 300";
         TextBox address = new() { Dock = DockStyle.Fill, Text = details.Address, ReadOnly = true };
         LabelField(fields, "اسم المورد", name, 0, 0); LabelField(fields, "الهاتف", phone, 2, 0);
         LabelField(fields, "العنوان", address, 0, 1);
-        var balance = new Label { Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleCenter, Font = new Font("Segoe UI", 11F, FontStyle.Bold), ForeColor = Color.FromArgb(0, 121, 107), Text = $"الرصيد المستحق: {details.Balance:N2} ج.م" };
+        var balance = new Label { Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleCenter, Font = new Font("Segoe UI", 11F, FontStyle.Bold), ForeColor = details.Balance < 0 ? Color.FromArgb(0, 105, 92) : Color.FromArgb(0, 121, 107), Text = details.Balance < 0 ? $"رصيد دائن لنا عند المورد: {Math.Abs(details.Balance):N2} ج.م" : $"المتبقي المستحق للمورد: {details.Balance:N2} ج.م" };
         fields.Controls.Add(balance, 2, 1); fields.SetColumnSpan(balance, 2);
         root.Controls.Add(fields, 0, 0);
         root.Controls.Add(MakeHint("سجل دفعات المورد — دبل كليك على الدفعة لفتح فاتورة الشراء المرتبطة بها"), 0, 1);
