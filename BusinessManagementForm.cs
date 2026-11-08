@@ -546,7 +546,7 @@ FROM Purchases WHERE SupplierId=$s ORDER BY CreatedAt DESC,Id DESC LIMIT 300";
         if (balance <= 0) { MessageBox.Show(this, "لا يوجد رصيد مستحق لهذا المورد.", "سداد مورد", MessageBoxButtons.OK, MessageBoxIcon.Information); return; }
         using var dialog = new AmountNoteDialog($"سداد حساب {name}", balance);
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
-        try { BusinessManagementStore.PaySupplier(currentUser, id, dialog.Amount, dialog.Note); LoadSuppliers(); MessageBox.Show(this, "تم تسجيل السداد وتحديث رصيد المورد.", "تم", MessageBoxButtons.OK, MessageBoxIcon.Information); }
+        try { BusinessManagementStore.PaySupplier(currentUser, id, dialog.Amount, dialog.Note); LoadSuppliers(); LoadPurchaseArchive(); MessageBox.Show(this, "تم تسجيل السداد وتحديث رصيد المورد.", "تم", MessageBoxButtons.OK, MessageBoxIcon.Information); }
         catch (Exception ex) { MessageBox.Show(this, ex.Message, "سداد مورد", MessageBoxButtons.OK, MessageBoxIcon.Error); }
     }
 
@@ -814,7 +814,7 @@ FROM Purchases WHERE SupplierId=$s ORDER BY CreatedAt DESC,Id DESC LIMIT 300";
             long id = BusinessManagementStore.CreatePurchase(currentUser, supplier.Id, purchaseNumber.Text, purchaseNotes.Text, purchasePaid.Value,
                 purchaseLines.Select(x => new PurchaseLineInput { ProductId = x.ProductId, Quantity = x.Quantity, UnitCost = x.UnitCost }).ToList());
             MessageBox.Show(this, $"تم حفظ فاتورة الشراء رقم {id}.\nتم تحديث كميات المخزن ومتوسط تكلفة الشراء تلقائيًا.", "تم حفظ المشتريات", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            ClearPurchase(); LoadSuppliers(); LoadPurchaseProducts(purchaseProductSearch.Text);
+            ClearPurchase(); LoadSuppliers(); LoadPurchaseProducts(purchaseProductSearch.Text); LoadPurchaseArchive();
         }
         catch (Exception ex) { AppLog.Error("تعذر حفظ فاتورة شراء", ex); MessageBox.Show(this, ex.Message, "فاتورة شراء", MessageBoxButtons.OK, MessageBoxIcon.Error); }
     }
@@ -961,7 +961,7 @@ WHERE NOT EXISTS(SELECT 1 FROM TreasuryMovements tm WHERE tm.ReferenceType='Sale
             var answer = MessageBox.Show(this, $"تأكيد إرجاع {qty} من ({sale.ProductName})؟\nسيتم رد المبلغ وإضافة الكمية للمخزن.", "تأكيد المرتجع", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
             if (answer != DialogResult.Yes) return;
             var result = BusinessManagementStore.RecordSaleReturn(currentUser, sale.TransactionId, qty, returnReason.Text);
-            returnReason.Clear(); LoadReturnRows();
+            returnReason.Clear(); LoadReturnRows(); LoadReturnArchive();
             MessageBox.Show(this, $"تم تسجيل المرتجع رقم {result.ReturnId}.\nالمبلغ المردود: {result.Refund:N2} ج.م", "تم", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
         catch (Exception ex) { AppLog.Error("تعذر تسجيل مرتجع", ex); MessageBox.Show(this, ex.Message, "مرتجع", MessageBoxButtons.OK, MessageBoxIcon.Error); }
