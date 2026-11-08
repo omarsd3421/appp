@@ -277,6 +277,18 @@ CREATE TABLE IF NOT EXISTS PurchaseReturnItems (
 );
 CREATE INDEX IF NOT EXISTS IX_PurchaseReturns_SupplierDate ON PurchaseReturns(SupplierId,CreatedAt);
 CREATE INDEX IF NOT EXISTS IX_PurchaseReturnItems_PurchaseItem ON PurchaseReturnItems(PurchaseItemId);
+CREATE TABLE IF NOT EXISTS SupplierCredits (
+    Id INTEGER PRIMARY KEY AUTOINCREMENT,
+    SupplierId INTEGER NOT NULL,
+    SourceReturnId INTEGER NOT NULL,
+    OriginalAmount NUMERIC NOT NULL,
+    RemainingAmount NUMERIC NOT NULL,
+    CreatedAt TEXT NOT NULL,
+    Note TEXT NULL,
+    FOREIGN KEY(SupplierId) REFERENCES Suppliers(Id),
+    FOREIGN KEY(SourceReturnId) REFERENCES PurchaseReturns(Id)
+);
+CREATE INDEX IF NOT EXISTS IX_SupplierCredits_Supplier ON SupplierCredits(SupplierId,CreatedAt);
 
 CREATE TABLE IF NOT EXISTS InventoryMovements (
     Id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -534,9 +546,11 @@ FROM SuspendedSaleItems WHERE SuspendedSaleId=$id ORDER BY Id";
         var result = new List<SupplierLookupRow>();
         using var c = AppDatabase.OpenConnection();
         using var cmd = c.CreateCommand();
-        cmd.CommandText = @"SELECT s.Id,s.Name,COALESCE(s.Phone,''),COALESCE(SUM(p.RemainingAmount),0)
-FROM Suppliers s LEFT JOIN Purchases p ON p.SupplierId=s.Id
-WHERE s.IsActive=1 GROUP BY s.Id,s.Name,s.Phone ORDER BY s.Name COLLATE NOCASE";
+        cmd.CommandText = @"SELECT s.Id,s.Name,COALESCE(s.Phone,''),
+COALESCE((SELECT SUM(p.RemainingAmount) FROM Purchases p WHERE p.SupplierId=s.Id),0)
+- COALESCE((SELECT SUM(sc.RemainingAmount) FROM SupplierCredits sc WHERE sc.SupplierId=s.Id),0)
+FROM Suppliers s
+WHERE s.IsActive=1 ORDER BY s.Name COLLATE NOCASE";
         using var r = cmd.ExecuteReader();
         while (r.Read()) result.Add(new SupplierLookupRow
         {
@@ -570,9 +584,9 @@ WHERE s.IsActive=1 GROUP BY s.Id,s.Name,s.Phone ORDER BY s.Name COLLATE NOCASE";
         using var c = AppDatabase.OpenConnection();
         using var cmd = c.CreateCommand();
         cmd.CommandText = @"SELECT s.Id,s.Name,COALESCE(s.Phone,''),COALESCE(s.Address,''),COALESCE(s.Notes,''),
-COALESCE(SUM(p.RemainingAmount),0)
-FROM Suppliers s LEFT JOIN Purchases p ON p.SupplierId=s.Id
-WHERE s.Id=$id GROUP BY s.Id,s.Name,s.Phone,s.Address,s.Notes LIMIT 1";
+COALESCE((SELECT SUM(p.RemainingAmount) FROM Purchases p WHERE p.SupplierId=s.Id),0)
+- COALESCE((SELECT SUM(sc.RemainingAmount) FROM SupplierCredits sc WHERE sc.SupplierId=s.Id),0)
+FROM Suppliers s WHERE s.Id=$id LIMIT 1";
         cmd.Parameters.AddWithValue("$id", supplierId);
         using var r = cmd.ExecuteReader();
         if (!r.Read()) return null;
@@ -824,7 +838,32 @@ VALUES($s,$no,$t,$paid,$remain,$notes,$u,$d); SELECT last_insert_rowid();";
         insert.Parameters.AddWithValue("$no", DbText(invoiceNumber));
         insert.Parameters.AddWithValue("$t", total);
         insert.Parameters.AddWithValue("$paid", paidAmount);
-        insert.Parameters.AddWithValue("$remain", total - paidAmount);
+        // Apply any credit balance previously created by supplier returns before creating new debt.
+        decimal supplierCredit = 0m;
+        using (var credits = c.CreateCommand())
+        {
+            credits.Transaction = tx;
+            credits.CommandText = "SELECT Id,RemainingAmount FROM SupplierCredits WHERE SupplierId=$s AND RemainingAmount>0 ORDER BY CreatedAt,Id";
+            credits.Parameters.AddWithValue("$s", supplierId);
+            var availableCredits = new List<(long Id, decimal Remaining)>();
+            using (var cr = credits.ExecuteReader())
+                while (cr.Read()) availableCredits.Add((cr.GetInt64(0), Dec(cr.GetValue(1))));
+            decimal creditToApply = Math.Max(0m, total - paidAmount);
+            foreach (var credit in availableCredits)
+            {
+                if (creditToApply <= 0.005m) break;
+                decimal applied = Math.Min(creditToApply, credit.Remaining);
+                using var apply = c.CreateCommand();
+                apply.Transaction = tx;
+                apply.CommandText = "UPDATE SupplierCredits SET RemainingAmount=MAX(0,RemainingAmount-$a) WHERE Id=$id";
+                apply.Parameters.AddWithValue("$a", applied);
+                apply.Parameters.AddWithValue("$id", credit.Id);
+                apply.ExecuteNonQuery();
+                supplierCredit += applied;
+                creditToApply -= applied;
+            }
+        }
+        insert.Parameters.AddWithValue("$remain", Math.Max(0m, total - paidAmount - supplierCredit));
         insert.Parameters.AddWithValue("$notes", DbText(notes));
         insert.Parameters.AddWithValue("$u", userId);
         insert.Parameters.AddWithValue("$d", DateTime.Now.ToString("O", CultureInfo.InvariantCulture));
@@ -880,7 +919,7 @@ VALUES($s,$no,$t,$paid,$remain,$notes,$u,$d); SELECT last_insert_rowid();";
             pay.Parameters.AddWithValue("$d", DateTime.Now.ToString("O", CultureInfo.InvariantCulture)); pay.ExecuteNonQuery();
         }
         AppDatabase.AddAuditLog(c, tx, userName, "إنشاء", "فاتورة شراء", purchaseId,
-            $"المورد: {supplierId} | الأصناف: {lines.Count} | الإجمالي: {total:F2} | المدفوع: {paidAmount:F2} | المتبقي: {total-paidAmount:F2}");
+            $"المورد: {supplierId} | الأصناف: {lines.Count} | الإجمالي: {total:F2} | المدفوع نقدًا: {paidAmount:F2} | رصيد مورد مستخدم: {supplierCredit:F2} | المتبقي: {Math.Max(0m,total-paidAmount-supplierCredit):F2}");
         tx.Commit();
         return purchaseId;
     }
