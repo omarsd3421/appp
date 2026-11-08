@@ -217,7 +217,10 @@ internal sealed class BusinessManagementForm : Form
         var bar = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, WrapContents = false };
         returnSearch.Width = 270; returnSearch.PlaceholderText = "بحث باسم الصنف";
         var find = UiKit.Button("🔎 تحديث النتائج", UiKit.Primary, 140, 40); find.Click += (_, _) => LoadReturnRows();
-        bar.Controls.Add(returnSearch); bar.Controls.Add(find); bar.Controls.Add(MakeHint("تظهر المبيعات النقدية أو المبيعات التي أصبح رصيد حساب عميلها صفرًا؛ لا يمكن رد بيع آجل مع وجود دين قائم على الحساب.")); root.Controls.Add(bar, 0, 0);
+        var diagnose = UiKit.Button("🩺 تشخيص المرتجعات", Color.FromArgb(75, 85, 99), 155, 40); diagnose.Click += (_, _) => RunReturnDiagnostics();
+        bar.Controls.Add(returnSearch); bar.Controls.Add(find); bar.Controls.Add(diagnose);
+        bar.Controls.Add(MakeHint("تظهر المبيعات النقدية أو المسددة بالكامل؛ المبيعات الآجلة ذات الدين القائم لا تظهر كقابلة للرد."));
+        root.Controls.Add(bar, 0, 0);
         StyleBusinessGrid(returnGrid);
         returnGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Id", Visible = false });
         returnGrid.Columns.Add(UiKit.GridText("Date", "تاريخ البيع", 150));
@@ -843,6 +846,85 @@ FROM Purchases WHERE SupplierId=$s ORDER BY CreatedAt DESC,Id DESC LIMIT 300";
         decimal limit = Math.Max(1, row.AvailableQuantity);
         if (returnQty.Value > limit) returnQty.Value = limit;
         returnQty.Maximum = limit;
+    }
+
+
+    private void RunReturnDiagnostics()
+    {
+        try
+        {
+            using var c = AppDatabase.OpenConnection();
+            long Scalar(string sql)
+            {
+                using var cmd = c.CreateCommand();
+                cmd.CommandText = sql;
+                return Convert.ToInt64(cmd.ExecuteScalar() ?? 0, CultureInfo.InvariantCulture);
+            }
+            bool HasTable(string name)
+            {
+                using var cmd = c.CreateCommand();
+                cmd.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=$name";
+                cmd.Parameters.AddWithValue("$name", name);
+                return Convert.ToInt64(cmd.ExecuteScalar() ?? 0, CultureInfo.InvariantCulture) > 0;
+            }
+
+            bool returnsTable = HasTable("SalesReturns");
+            bool itemsTable = HasTable("SalesReturnItems");
+            bool inventoryTable = HasTable("InventoryMovements");
+            bool treasuryTable = HasTable("TreasuryMovements");
+            long saleLines = Scalar("SELECT COUNT(*) FROM Transactions WHERE TransactionType='SALE' AND ProductId IS NOT NULL");
+            long debtBlocked = Scalar("SELECT COUNT(*) FROM Transactions WHERE TransactionType='SALE' AND ProductId IS NOT NULL AND COALESCE(RemainingAmount,0)>0.005");
+            long returnDocuments = returnsTable ? Scalar("SELECT COUNT(*) FROM SalesReturns") : 0;
+            long returnItems = itemsTable ? Scalar("SELECT COUNT(*) FROM SalesReturnItems") : 0;
+            long returnedUnits = itemsTable ? Scalar("SELECT COALESCE(SUM(Quantity),0) FROM SalesReturnItems") : 0;
+            long availableLines = BusinessManagementStore.LoadReturnableSales("").Count;
+            long overReturnedLines = itemsTable
+                ? Scalar(@"SELECT COUNT(*) FROM (
+SELECT ri.OriginalTransactionId
+FROM SalesReturnItems ri JOIN Transactions t ON t.Id=ri.OriginalTransactionId
+GROUP BY ri.OriginalTransactionId
+HAVING SUM(ri.Quantity)>MAX(COALESCE(t.Quantity,1))
+)")
+                : 0;
+            long missingStockMovements = returnsTable && itemsTable && inventoryTable
+                ? Scalar(@"SELECT COUNT(*) FROM SalesReturns sr
+WHERE EXISTS(SELECT 1 FROM SalesReturnItems ri WHERE ri.ReturnId=sr.Id)
+AND NOT EXISTS(SELECT 1 FROM InventoryMovements im WHERE im.ReferenceType='SalesReturn' AND im.ReferenceId=sr.Id)")
+                : 0;
+            long missingTreasuryMovements = returnsTable && treasuryTable
+                ? Scalar(@"SELECT COUNT(*) FROM SalesReturns sr
+WHERE NOT EXISTS(SELECT 1 FROM TreasuryMovements tm WHERE tm.ReferenceType='SalesReturn' AND tm.ReferenceId=sr.Id)")
+                : 0;
+
+            var issues = new List<string>();
+            if (!returnsTable || !itemsTable) issues.Add("جداول المرتجعات غير مكتملة؛ يلزم تهيئة قاعدة البيانات.");
+            if (saleLines > 0 && availableLines == 0 && debtBlocked > 0)
+                issues.Add("لا توجد عمليات ظاهرة للإرجاع لأن هناك مبيعات عليها مبالغ مستحقة؛ شاشة المرتجعات الحالية لا ترد البيع الآجل قبل تسوية الدين.");
+            if (overReturnedLines > 0) issues.Add("يوجد سطر بيع تم إرجاع كمية أكبر من الكمية المباعة؛ راجع سجلات المرتجعات.");
+            if (missingStockMovements > 0) issues.Add("بعض فواتير المرتجع لا يقابلها سجل حركة مخزون.");
+            if (missingTreasuryMovements > 0) issues.Add("بعض فواتير المرتجع لا يقابلها سجل حركة خزينة.");
+            if (issues.Count == 0) issues.Add("لم يتم العثور على خلل بنيوي واضح في سجلات المرتجعات التي فحصها التشخيص.");
+
+            string report =
+                $"تشخيص المرتجعات — {DateTime.Now:yyyy-MM-dd HH:mm}\n\n" +
+                $"عمليات بيع أصناف مسجلة: {saleLines}\n" +
+                $"عمليات بيع عليها رصيد متبقٍ (قد يمنع ظهورها): {debtBlocked}\n" +
+                $"عمليات بيع متاحة للإرجاع الآن: {availableLines}\n" +
+                $"فواتير مرتجعات مسجلة: {returnDocuments}\n" +
+                $"سطور مرتجعات مسجلة: {returnItems}\n" +
+                $"إجمالي الوحدات المرتجعة: {returnedUnits}\n" +
+                $"سطور تجاوزت الكمية المباعة: {overReturnedLines}\n" +
+                $"مرتجعات بلا حركة مخزون مقابلة: {missingStockMovements}\n" +
+                $"مرتجعات بلا حركة خزينة مقابلة: {missingTreasuryMovements}\n\n" +
+                "نتيجة الفحص:\n• " + string.Join("\n• ", issues) +
+                "\n\nملاحظة: التشخيص يقرأ السجلات فقط ولا يغيّر الكميات أو الأرصدة.";
+            ShowArchiveText("تقرير تشخيص المرتجعات", report);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("تعذر تشخيص المرتجعات", ex);
+            MessageBox.Show(this, "تعذر إكمال فحص المرتجعات:\n" + ex.Message, "تشخيص المرتجعات", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
     }
 
     private void ProcessReturn()
