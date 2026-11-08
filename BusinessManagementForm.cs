@@ -401,7 +401,7 @@ internal sealed class BusinessManagementForm : Form
                 if(confirm!=DialogResult.Yes)return;
                 var result=BusinessManagementStore.RecordPurchaseReturn(currentUser,selected.Id,lines,reason.Text);
                 LoadSuppliers(); LoadPurchaseArchive(); LoadStockHistory();
-                MessageBox.Show(dialog,$"تم تسجيل مرتجع المورد رقم {result.ReturnId}.\nإجمالي المرتجع: {result.Total:N2} ج.م\nالقيمة المسواة في حساب المورد: {result.SupplierCredit:N2} ج.م\nالمبلغ الداخل للخزنة: {result.CashRefund:N2} ج.م","تم",MessageBoxButtons.OK,MessageBoxIcon.Information);
+                MessageBox.Show(dialog,$"تم تسجيل مرتجع المورد رقم {result.ReturnId}.\nإجمالي المرتجع: {result.Total:N2} ج.م\nالمخصوم من مديونية فواتير المورد: {result.SupplierCredit:N2} ج.م\nرصيد دائن جديد لك عند المورد: {result.SupplierCreditBalance:N2} ج.م\nالمبلغ الداخل للخزنة: {result.CashRefund:N2} ج.م","تم",MessageBoxButtons.OK,MessageBoxIcon.Information);
                 dialog.Close();
             }
             catch(Exception ex){AppLog.Error("تعذر تسجيل مرتجع مشتريات للمورد",ex);MessageBox.Show(dialog,ex.Message,"مرتجع المورد",MessageBoxButtons.OK,MessageBoxIcon.Error);}
@@ -439,7 +439,7 @@ internal sealed class BusinessManagementForm : Form
             var row=BusinessManagementStore.LoadPurchaseReturnArchive().FirstOrDefault(x=>x.Id==Convert.ToInt64(grid.Rows[e.RowIndex].Cells["Id"].Value,CultureInfo.InvariantCulture));
             if(row==null)return;
             ShowArchiveText($"تفاصيل مرتجع المورد رقم {row.Id}",
-                $"رقم المرتجع: {row.Id}\nالمورد: {row.SupplierName}\nالتاريخ: {row.CreatedAt:yyyy-MM-dd HH:mm}\nالأصناف والكميات: {row.Products}\nإجمالي قيمة المرتجع: {row.Total:N2} ج.م\nالمستلم نقدًا من المورد: {row.CashRefund:N2} ج.م\nالمخصوم من حساب المورد: {row.Total-row.CashRefund:N2} ج.م\nالسبب: {row.Reason}");
+                $"رقم المرتجع: {row.Id}\nالمورد: {row.SupplierName}\nالتاريخ: {row.CreatedAt:yyyy-MM-dd HH:mm}\nالأصناف والكميات: {row.Products}\nإجمالي قيمة المرتجع: {row.Total:N2} ج.م\nالمستلم نقدًا من المورد: {row.CashRefund:N2} ج.م\nالمخصوم من مديونية المورد/الرصيد الدائن: {row.Total-row.CashRefund:N2} ج.م\nالسبب: {row.Reason}");
         };
         var close=UiKit.Button("إغلاق",Color.FromArgb(108,117,125),100,40);
         close.Dock=DockStyle.Bottom;close.Click+=(_,_)=>form.Close();
