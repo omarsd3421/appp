@@ -48,6 +48,7 @@ internal sealed class BusinessManagementForm : Form
     private readonly Label profitSummary = new();
     private readonly DataGridView profitProductGrid = new();
     private readonly DataGridView profitEmployeeGrid = new();
+    private readonly DataGridView profitPrintingGrid = new();
     private ProfitSnapshot? lastProfit;
 
     // البحث العام
@@ -250,34 +251,52 @@ internal sealed class BusinessManagementForm : Form
         bar.Controls.Add(LabeledControl("من", profitFrom, 165)); bar.Controls.Add(LabeledControl("إلى", profitTo, 165)); bar.Controls.Add(show);
         root.Controls.Add(bar, 0, 0);
         profitSummary.Dock = DockStyle.Fill; profitSummary.BackColor = Color.White; profitSummary.ForeColor = UiKit.Text;
-        profitSummary.Padding = new Padding(18); profitSummary.Font = new Font("Segoe UI", 11F, FontStyle.Bold);
+        profitSummary.Padding = new Padding(18); profitSummary.Font = new Font("Segoe UI", 10.5F, FontStyle.Bold);
         profitSummary.TextAlign = ContentAlignment.MiddleRight;
-        profitSummary.Text = "اختر الفترة واضغط حساب النتائج.\n\nسيتم احتساب هامش مبيعات المنتجات بتكلفة الشراء المحفوظة وقت البيع، وعمولات الخدمات، والمصروفات التشغيلية المسجلة.";
+        profitSummary.Text = "اختر الفترة واضغط حساب النتائج.\n\nسيظهر هامش المبيعات بتكلفة الشراء التاريخية، والمرتجعات والعمولات والمصروفات، مع تفصيل إيرادات الطباعة حسب الفئة واللون والوجهين. تكلفة الورق والحبر غير مسجلة حاليًا، لذلك لا يتم وصف إيرادات الطباعة بأنها صافي ربح.";
         root.Controls.Add(profitSummary, 0, 1);
 
-        var detail = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, Padding = new Padding(0, 8, 0, 0) };
-        detail.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 56)); detail.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 44));
+        var detail = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 1, Padding = new Padding(0, 8, 0, 0) };
+        detail.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 42));
+        detail.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 29));
+        detail.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 29));
+
         var productsPanel = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2, Padding = new Padding(4) };
         productsPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 34)); productsPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         productsPanel.Controls.Add(MakeHint("ربحية الأصناف — بعد خصم المرتجعات"), 0, 0);
         StyleBusinessGrid(profitProductGrid);
-        profitProductGrid.Columns.Add(UiKit.GridText("Product", "الصنف", 230));
-        profitProductGrid.Columns.Add(UiKit.GridText("Revenue", "المبيعات", 100));
-        profitProductGrid.Columns.Add(UiKit.GridText("Cost", "التكلفة", 100));
-        profitProductGrid.Columns.Add(UiKit.GridText("Returns", "المرتجعات", 100));
-        profitProductGrid.Columns.Add(UiKit.GridText("Profit", "الربح", 100));
+        profitProductGrid.Columns.Add(UiKit.GridText("Product", "الصنف", 180));
+        profitProductGrid.Columns.Add(UiKit.GridText("Revenue", "المبيعات", 85));
+        profitProductGrid.Columns.Add(UiKit.GridText("Cost", "التكلفة", 85));
+        profitProductGrid.Columns.Add(UiKit.GridText("Returns", "المرتجعات", 85));
+        profitProductGrid.Columns.Add(UiKit.GridText("Profit", "الربح", 85));
         productsPanel.Controls.Add(profitProductGrid, 0, 1);
+
         var employeePanel = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2, Padding = new Padding(4) };
         employeePanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 34)); employeePanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        employeePanel.Controls.Add(MakeHint("مبيعات الأصناف حسب الموظف — الربح للعمليات ذات التكلفة المعروفة"), 0, 0);
+        employeePanel.Controls.Add(MakeHint("مبيعات الأصناف حسب الموظف"), 0, 0);
         StyleBusinessGrid(profitEmployeeGrid);
-        profitEmployeeGrid.Columns.Add(UiKit.GridText("User", "الموظف", 130));
-        profitEmployeeGrid.Columns.Add(UiKit.GridText("Sales", "المبيعات", 100));
-        profitEmployeeGrid.Columns.Add(UiKit.GridText("Profit", "هامش معروف", 110));
-        profitEmployeeGrid.Columns.Add(UiKit.GridText("Count", "العمليات", 80));
-        profitEmployeeGrid.Columns.Add(UiKit.GridText("Unknown", "بلا تكلفة", 85));
+        profitEmployeeGrid.Columns.Add(UiKit.GridText("User", "الموظف", 105));
+        profitEmployeeGrid.Columns.Add(UiKit.GridText("Sales", "المبيعات", 85));
+        profitEmployeeGrid.Columns.Add(UiKit.GridText("Profit", "هامش معروف", 95));
+        profitEmployeeGrid.Columns.Add(UiKit.GridText("Count", "العمليات", 70));
+        profitEmployeeGrid.Columns.Add(UiKit.GridText("Unknown", "بلا تكلفة", 75));
         employeePanel.Controls.Add(profitEmployeeGrid, 0, 1);
-        detail.Controls.Add(productsPanel, 0, 0); detail.Controls.Add(employeePanel, 1, 0);
+
+        var printingPanel = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2, Padding = new Padding(4) };
+        printingPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 34)); printingPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        printingPanel.Controls.Add(MakeHint("إيرادات الطباعة حسب الفئة واللون"), 0, 0);
+        StyleBusinessGrid(profitPrintingGrid);
+        profitPrintingGrid.Columns.Add(UiKit.GridText("Category", "الفئة", 90));
+        profitPrintingGrid.Columns.Add(UiKit.GridText("Color", "اللون", 75));
+        profitPrintingGrid.Columns.Add(UiKit.GridText("Duplex", "الوجهين", 85));
+        profitPrintingGrid.Columns.Add(UiKit.GridText("Jobs", "عمليات", 65));
+        profitPrintingGrid.Columns.Add(UiKit.GridText("Revenue", "الإيراد", 95));
+        printingPanel.Controls.Add(profitPrintingGrid, 0, 1);
+
+        detail.Controls.Add(productsPanel, 0, 0);
+        detail.Controls.Add(employeePanel, 1, 0);
+        detail.Controls.Add(printingPanel, 2, 0);
         root.Controls.Add(detail, 0, 2);
         page.Controls.Add(root); return page;
     }
@@ -869,6 +888,9 @@ FROM Purchases WHERE SupplierId=$s ORDER BY CreatedAt DESC,Id DESC LIMIT 300";
             profitEmployeeGrid.Rows.Clear();
             foreach (var item in p.EmployeeBreakdown)
                 profitEmployeeGrid.Rows.Add(item.UserName, item.SalesRevenue.ToString("N2"), item.KnownGrossProfit.ToString("N2"), item.SaleCount, item.UncostedCount);
+            profitPrintingGrid.Rows.Clear();
+            foreach (var item in p.PrintingBreakdown)
+                profitPrintingGrid.Rows.Add(item.Category, item.ColorType, item.DuplexMode, item.Jobs, item.Revenue.ToString("N2"));
         }
         catch (Exception ex) { MessageBox.Show(this, ex.Message, "تقرير الأرباح", MessageBoxButtons.OK, MessageBoxIcon.Error); }
     }
