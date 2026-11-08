@@ -953,41 +953,46 @@ ORDER BY pr.CreatedAt DESC,pr.Id DESC LIMIT 1000";
         using var cmd = c.CreateCommand();
         cmd.CommandText = @"SELECT pi.Id,pi.PurchaseId,pi.ProductId,pi.ProductNameSnapshot,pi.Quantity,pi.UnitCost,
 COALESCE(p.InvoiceNumber,''),p.CreatedAt,
-MAX(0,pi.Quantity-COALESCE((SELECT SUM(ri.Quantity) FROM PurchaseReturnItems ri WHERE ri.PurchaseItemId=pi.Id),0))
+COALESCE((SELECT SUM(ri.Quantity) FROM PurchaseReturnItems ri WHERE ri.PurchaseItemId=pi.Id),0)
 FROM PurchaseItems pi
 JOIN Purchases p ON p.Id=pi.PurchaseId
 WHERE p.SupplierId=$supplier AND ($purchase IS NULL OR p.Id=$purchase)
 ORDER BY p.CreatedAt,p.Id,pi.Id";
         cmd.Parameters.AddWithValue("$supplier", supplierId);
         cmd.Parameters.AddWithValue("$purchase", (object?)purchaseId ?? DBNull.Value);
-        using var r = cmd.ExecuteReader();
-        while (r.Read())
+        using (var r = cmd.ExecuteReader())
         {
-            int remaining = Convert.ToInt32(r.GetValue(8), CultureInfo.InvariantCulture);
-            if (remaining <= 0) continue;
-            rows.Add(new PurchaseReturnableItemRow {
-                PurchaseItemId=r.GetInt64(0), PurchaseId=r.GetInt64(1), ProductId=r.GetInt64(2),
-                ProductName=r.GetString(3), PurchasedQuantity=Convert.ToInt32(r.GetValue(4),CultureInfo.InvariantCulture),
-                UnitCost=Dec(r.GetValue(5)), InvoiceNumber=r.GetString(6),
-                PurchaseDate=DateTime.TryParse(r.GetString(7),CultureInfo.InvariantCulture,DateTimeStyles.RoundtripKind,out var dt)?dt:DateTime.MinValue,
-                AvailableQuantity=remaining
-            });
-        }
-        // لا يمكن رد كتب خرجت من المخزن بالفعل؛ نوزع الرصيد الحالي على أقدم مشتريات المورد.
-        var stock = new Dictionary<long,int>();
-        foreach (var row in rows)
-        {
-            if (!stock.TryGetValue(row.ProductId,out int available))
+            while (r.Read())
             {
-                using var q=c.CreateCommand();
-                q.CommandText="SELECT Quantity FROM Products WHERE Id=$id";
-                q.Parameters.AddWithValue("$id",row.ProductId);
-                available=Convert.ToInt32(q.ExecuteScalar() ?? 0,CultureInfo.InvariantCulture);
+                int purchased = Convert.ToInt32(r.GetValue(4), CultureInfo.InvariantCulture);
+                int returned = Convert.ToInt32(r.GetValue(8), CultureInfo.InvariantCulture);
+                rows.Add(new PurchaseReturnableItemRow {
+                    PurchaseItemId=r.GetInt64(0), PurchaseId=r.GetInt64(1), ProductId=r.GetInt64(2),
+                    ProductName=r.GetString(3), PurchasedQuantity=purchased, ReturnedQuantity=returned,
+                    UnreturnedQuantity=Math.Max(0,purchased-returned), UnitCost=Dec(r.GetValue(5)),
+                    InvoiceNumber=r.GetString(6),
+                    PurchaseDate=DateTime.TryParse(r.GetString(7),CultureInfo.InvariantCulture,DateTimeStyles.RoundtripKind,out var dt)?dt:DateTime.MinValue
+                });
             }
-            row.AvailableQuantity=Math.Min(row.AvailableQuantity,Math.Max(0,available));
-            stock[row.ProductId]=Math.Max(0,available-row.AvailableQuantity);
         }
-        return rows.Where(x=>x.AvailableQuantity>0).ToList();
+
+        // FIFO: تُستهلك الكميات المباعة من أقدم دفعات الشراء أولًا؛ فيبقى أحدث لوط متاحًا للرد.
+        foreach (var group in rows.GroupBy(x => x.ProductId))
+        {
+            using var stockQuery = c.CreateCommand();
+            stockQuery.CommandText = "SELECT Quantity FROM Products WHERE Id=$id";
+            stockQuery.Parameters.AddWithValue("$id", group.Key);
+            int stock = Math.Max(0,Convert.ToInt32(stockQuery.ExecuteScalar() ?? 0,CultureInfo.InvariantCulture));
+            int unreturnedTotal = group.Sum(x => x.UnreturnedQuantity);
+            int soldToAllocate = Math.Max(0,unreturnedTotal-stock);
+            foreach (var row in group.OrderBy(x=>x.PurchaseDate).ThenBy(x=>x.PurchaseId).ThenBy(x=>x.PurchaseItemId))
+            {
+                int soldFromThisLot = Math.Min(row.UnreturnedQuantity,soldToAllocate);
+                soldToAllocate -= soldFromThisLot;
+                row.AvailableQuantity = Math.Max(0,row.UnreturnedQuantity-soldFromThisLot);
+            }
+        }
+        return rows;
     }
 
     public static (long ReturnId, decimal Total, decimal SupplierCredit, decimal CashRefund) RecordPurchaseReturn(
@@ -1505,6 +1510,8 @@ internal sealed class PurchaseReturnableItemRow
     public long ProductId { get; init; }
     public string ProductName { get; init; } = "";
     public int PurchasedQuantity { get; init; }
+    public int ReturnedQuantity { get; init; }
+    public int UnreturnedQuantity { get; init; }
     public int AvailableQuantity { get; set; }
     public decimal UnitCost { get; init; }
     public string InvoiceNumber { get; init; } = "";
