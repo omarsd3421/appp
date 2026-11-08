@@ -873,7 +873,28 @@ FROM Purchases WHERE SupplierId=$s ORDER BY CreatedAt DESC,Id DESC LIMIT 300";
             bool inventoryTable = HasTable("InventoryMovements");
             bool treasuryTable = HasTable("TreasuryMovements");
             long saleLines = Scalar("SELECT COUNT(*) FROM Transactions WHERE TransactionType='SALE' AND ProductId IS NOT NULL");
-            long debtBlocked = Scalar("SELECT COUNT(*) FROM Transactions WHERE TransactionType='SALE' AND ProductId IS NOT NULL AND COALESCE(RemainingAmount,0)>0.005");
+            long debtBlocked = Scalar(@"SELECT COUNT(*) FROM Transactions t
+WHERE t.TransactionType='SALE' AND t.ProductId IS NOT NULL AND COALESCE(t.RemainingAmount,0)>0.005
+AND (t.CustomerId IS NULL OR
+COALESCE((SELECT SUM(CASE WHEN d.Type='DEBT' THEN d.Amount ELSE -d.Amount END)
+          FROM Debts_History d WHERE d.CustomerId=t.CustomerId),0)
++ COALESCE((SELECT SUM(COALESCE(old.RemainingAmount,0))
+            FROM Transactions old
+            WHERE old.CustomerId=t.CustomerId
+              AND old.TransactionType IN ('SALE','COPY','SERVICE')
+              AND COALESCE(old.RemainingAmount,0)>0
+              AND NOT EXISTS (SELECT 1 FROM Debts_History od
+                              WHERE od.TransactionId=old.Id AND od.Type='DEBT')),0)>0.005)");
+            long openShift;
+            using (var shift = c.CreateCommand())
+            {
+                shift.CommandText = @"SELECT COUNT(*) FROM DailySessions ds
+JOIN DailyShifts sh ON sh.SessionId=ds.Id
+WHERE ds.BusinessDate=$date AND ds.Status='OPEN' AND sh.Status='OPEN' AND sh.UserName=$user";
+                shift.Parameters.AddWithValue("$date", DateTime.Today.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
+                shift.Parameters.AddWithValue("$user", currentUser);
+                openShift = Convert.ToInt64(shift.ExecuteScalar() ?? 0, CultureInfo.InvariantCulture);
+            }
             long returnDocuments = returnsTable ? Scalar("SELECT COUNT(*) FROM SalesReturns") : 0;
             long returnItems = itemsTable ? Scalar("SELECT COUNT(*) FROM SalesReturnItems") : 0;
             long returnedUnits = itemsTable ? Scalar("SELECT COALESCE(SUM(Quantity),0) FROM SalesReturnItems") : 0;
@@ -898,18 +919,21 @@ WHERE NOT EXISTS(SELECT 1 FROM TreasuryMovements tm WHERE tm.ReferenceType='Sale
 
             var issues = new List<string>();
             if (!returnsTable || !itemsTable) issues.Add("جداول المرتجعات غير مكتملة؛ يلزم تهيئة قاعدة البيانات.");
-            if (saleLines > 0 && availableLines == 0 && debtBlocked > 0)
-                issues.Add("لا توجد عمليات ظاهرة للإرجاع لأن هناك مبيعات عليها مبالغ مستحقة؛ شاشة المرتجعات الحالية لا ترد البيع الآجل قبل تسوية الدين.");
+            if (debtBlocked > 0)
+                issues.Add($"هناك {debtBlocked} عملية بيع آجل ما زال رصيد العميل عليها قائمًا؛ لن تظهر هذه العمليات كقابلة للإرجاع قبل تسوية دين العميل.");
+            if (openShift == 0)
+                issues.Add("لا يوجد شفت مفتوح للمستخدم الحالي اليوم؛ تسجيل رد المبلغ في الخزينة سيفشل حتى يتم فتح الشفت.");
             if (overReturnedLines > 0) issues.Add("يوجد سطر بيع تم إرجاع كمية أكبر من الكمية المباعة؛ راجع سجلات المرتجعات.");
             if (missingStockMovements > 0) issues.Add("بعض فواتير المرتجع لا يقابلها سجل حركة مخزون.");
             if (missingTreasuryMovements > 0) issues.Add("بعض فواتير المرتجع لا يقابلها سجل حركة خزينة.");
-            if (issues.Count == 0) issues.Add("لم يتم العثور على خلل بنيوي واضح في سجلات المرتجعات التي فحصها التشخيص.");
+            if (issues.Count == 0) issues.Add("لم يتم العثور على خلل بنيوي أو قيد تشغيل واضح في السجلات التي فحصها التشخيص.");
 
             string report =
                 $"تشخيص المرتجعات — {DateTime.Now:yyyy-MM-dd HH:mm}\n\n" +
                 $"عمليات بيع أصناف مسجلة: {saleLines}\n" +
-                $"عمليات بيع عليها رصيد متبقٍ (قد يمنع ظهورها): {debtBlocked}\n" +
-                $"عمليات بيع متاحة للإرجاع الآن: {availableLines}\n" +
+                $"عمليات بيع محجوبة حاليًا بسبب دين العميل: {debtBlocked}\n" +
+                $"عمليات بيع متاحة للإرجاع في نتائج الشاشة (حتى 300): {availableLines}\n" +
+                $"الشفت المفتوح للمستخدم الحالي: {(openShift > 0 ? "نعم" : "لا")}\n" +
                 $"فواتير مرتجعات مسجلة: {returnDocuments}\n" +
                 $"سطور مرتجعات مسجلة: {returnItems}\n" +
                 $"إجمالي الوحدات المرتجعة: {returnedUnits}\n" +
