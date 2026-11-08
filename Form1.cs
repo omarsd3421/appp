@@ -726,11 +726,10 @@ namespace LibraryPrintApp
                 DropDownStyle = ComboBoxStyle.DropDownList,
                 Font = controlFont
             };
-            cmbSelectedFilePrintTemplate.Items.Add("— اختر قالب الطباعة —");
-            foreach (string templateName in AppOptions.GetPrintTemplateNames())
-                cmbSelectedFilePrintTemplate.Items.Add(templateName);
-            cmbSelectedFilePrintTemplate.SelectedIndex = 0;
-            cmbSelectedFilePrintTemplate.Enabled = cmbSelectedFilePrintTemplate.Items.Count > 1;
+            RefreshSelectedFilePrintTemplateList();
+            // حدّث القائمة عند فتحها حتى تظهر القوالب التي حُفظت من نافذة إعدادات الطباعة
+            // بعد فتح الشاشة الرئيسية، ولا تجعل القائمة تبدو كعنصر زخرفي معطّل.
+            cmbSelectedFilePrintTemplate.DropDown += (_, _) => RefreshSelectedFilePrintTemplateList();
             ComboBoxStyler.ApplyModernStyle(cmbSelectedFilePrintTemplate, Color.FromArgb(52, 73, 94));
             cmbSelectedFilePrintTemplate.SelectedIndexChanged += (_, _) => ApplySelectedFilePrintTemplate();
 
@@ -6193,6 +6192,48 @@ namespace LibraryPrintApp
             if (row.Tag is FileEntry entry && !string.IsNullOrWhiteSpace(entry.PricingCategory))
                 return entry.PricingCategory;
             return cmbPricingPreset.SelectedItem?.ToString() ?? "عادي";
+        }
+
+        private void RefreshSelectedFilePrintTemplateList()
+        {
+            if (cmbSelectedFilePrintTemplate == null || cmbSelectedFilePrintTemplate.IsDisposed)
+                return;
+
+            string? previous = cmbSelectedFilePrintTemplate.SelectedItem?.ToString();
+            var names = AppOptions.GetPrintTemplateNames();
+
+            cmbSelectedFilePrintTemplate.BeginUpdate();
+            try
+            {
+                cmbSelectedFilePrintTemplate.Items.Clear();
+                cmbSelectedFilePrintTemplate.Items.Add(
+                    names.Count == 0
+                        ? "لا توجد قوالب محفوظة — احفظ قالبًا من خيارات الطباعة"
+                        : "— اختر قالب الطباعة —");
+
+                foreach (string name in names)
+                    cmbSelectedFilePrintTemplate.Items.Add(name);
+
+                int selected = 0;
+                if (!string.IsNullOrWhiteSpace(previous))
+                {
+                    for (int i = 1; i < cmbSelectedFilePrintTemplate.Items.Count; i++)
+                    {
+                        if (string.Equals(cmbSelectedFilePrintTemplate.Items[i]?.ToString(),
+                            previous, StringComparison.OrdinalIgnoreCase))
+                        {
+                            selected = i;
+                            break;
+                        }
+                    }
+                }
+                cmbSelectedFilePrintTemplate.SelectedIndex = selected;
+                cmbSelectedFilePrintTemplate.Enabled = true;
+            }
+            finally
+            {
+                cmbSelectedFilePrintTemplate.EndUpdate();
+            }
         }
 
         private void ApplySelectedFilePrintTemplate()
