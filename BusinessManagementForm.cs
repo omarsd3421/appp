@@ -253,6 +253,8 @@ internal sealed class BusinessManagementForm : Form
         grid.Columns.Add(UiKit.GridText("Cost","تكلفة الوحدة",100));
         var qtyCol = new DataGridViewTextBoxColumn { Name="ReturnQty", HeaderText="كمية المرتجع", FillWeight=90, ReadOnly=false };
         grid.Columns.Add(qtyCol);
+        foreach (DataGridViewColumn column in grid.Columns) column.ReadOnly = true;
+        qtyCol.ReadOnly = false;
         root.Controls.Add(grid, 0, 2);
         var footer = new FlowLayoutPanel { Dock=DockStyle.Fill, FlowDirection=FlowDirection.RightToLeft, WrapContents=false, Padding=new Padding(3) };
         var totalLabel = new Label { AutoSize=true, Text="إجمالي المرتجع: 0.00 ج.م", Font=new Font("Segoe UI",11F,FontStyle.Bold), ForeColor=UiKit.Text, Padding=new Padding(8,10,8,0) };
