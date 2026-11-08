@@ -932,14 +932,31 @@ FROM Purchases WHERE SupplierId=$s ORDER BY CreatedAt DESC,Id DESC LIMIT 300";
     {
         using var form = new Form
         {
-            Text = title, StartPosition = FormStartPosition.CenterParent, Size = new Size(760, 620),
-            RightToLeft = RightToLeft.Yes, RightToLeftLayout = true, Font = new Font("Segoe UI", 10F), BackColor = Color.White
+            Text = title, StartPosition = FormStartPosition.CenterParent, Size = new Size(1040, 760),
+            MinimumSize = new Size(820, 600), RightToLeft = RightToLeft.Yes, RightToLeftLayout = true,
+            Font = new Font("Segoe UI", 11F), BackColor = Color.FromArgb(245, 247, 250)
         };
         EnableEscapeClose(form);
-        var body = new TextBox { Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, WordWrap = true, Text = content, Font = new Font("Consolas", 10F), RightToLeft = RightToLeft.Yes };
-        var close = UiKit.Button("إغلاق", Color.FromArgb(108, 117, 125), 110, 40);
-        close.Dock = DockStyle.Bottom; close.Click += (_, _) => form.Close();
-        form.Controls.Add(body); form.Controls.Add(close); form.ShowDialog(this);
+        var root = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2, Padding = new Padding(14) };
+        root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 56));
+        var bodyHost = new Panel { Dock = DockStyle.Fill, BackColor = Color.White, Padding = new Padding(18), BorderStyle = BorderStyle.FixedSingle };
+        var body = new RichTextBox
+        {
+            Dock = DockStyle.Fill, ReadOnly = true, BorderStyle = BorderStyle.None,
+            DetectUrls = false, WordWrap = true, ScrollBars = RichTextBoxScrollBars.Vertical,
+            Text = content, Font = new Font("Segoe UI", 12F), RightToLeft = RightToLeft.Yes,
+            BackColor = Color.White, ForeColor = Color.FromArgb(40, 50, 62), ZoomFactor = 1.0f
+        };
+        bodyHost.Controls.Add(body);
+        root.Controls.Add(bodyHost, 0, 0);
+        var footer = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight, WrapContents = false, Padding = new Padding(0, 8, 0, 0) };
+        var close = UiKit.Button("إغلاق  (Esc)", Color.FromArgb(52, 73, 94), 140, 42);
+        close.Click += (_, _) => form.Close();
+        footer.Controls.Add(close);
+        root.Controls.Add(footer, 0, 1);
+        form.Controls.Add(root);
+        form.ShowDialog(this);
     }
 
     private void LoadPurchaseArchive()
