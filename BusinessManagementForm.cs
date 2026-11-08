@@ -219,7 +219,7 @@ internal sealed class BusinessManagementForm : Form
         var find = UiKit.Button("🔎 تحديث النتائج", UiKit.Primary, 140, 40); find.Click += (_, _) => LoadReturnRows();
         var diagnose = UiKit.Button("🩺 تشخيص المرتجعات", Color.FromArgb(75, 85, 99), 155, 40); diagnose.Click += (_, _) => RunReturnDiagnostics();
         bar.Controls.Add(returnSearch); bar.Controls.Add(find); bar.Controls.Add(diagnose);
-        bar.Controls.Add(MakeHint("البيع الآجل لا يظهر قبل تسوية دين العميل؛ يشترط شفت مفتوح لرد المبلغ."));
+        bar.Controls.Add(MakeHint("تظهر المبيعات النقدية والآجلة؛ قيمة المرتجع تخصم من دين العميل أولًا، ويُرد الفائض نقدًا. يلزم شفت مفتوح عند وجود رد نقدي."));
         root.Controls.Add(bar, 0, 0);
         StyleBusinessGrid(returnGrid);
         returnGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Id", Visible = false });
@@ -970,11 +970,13 @@ WHERE NOT EXISTS(SELECT 1 FROM TreasuryMovements tm WHERE tm.ReferenceType='Sale
         if (qty > sale.AvailableQuantity) { MessageBox.Show(this, $"المتاح للإرجاع {sale.AvailableQuantity} فقط.", "الكمية", MessageBoxButtons.OK, MessageBoxIcon.Warning); return; }
         try
         {
-            var answer = MessageBox.Show(this, $"تأكيد إرجاع {qty} من ({sale.ProductName})؟\nسيتم رد المبلغ وإضافة الكمية للمخزن.", "تأكيد المرتجع", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+            var answer = MessageBox.Show(this, $"تأكيد إرجاع {qty} من ({sale.ProductName})؟\nسيتم إضافة الكمية للمخزن، وخصم قيمة المرتجع من دين العميل أولًا، ورد أي فائض نقدًا فقط.", "تأكيد المرتجع", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
             if (answer != DialogResult.Yes) return;
             var result = BusinessManagementStore.RecordSaleReturn(currentUser, sale.TransactionId, qty, returnReason.Text);
             returnReason.Clear(); LoadReturnRows(); LoadReturnArchive();
-            MessageBox.Show(this, $"تم تسجيل المرتجع رقم {result.ReturnId}.\nالمبلغ المردود: {result.Refund:N2} ج.م", "تم", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            MessageBox.Show(this,
+                $"تم تسجيل المرتجع رقم {result.ReturnId}.\nقيمة المرتجع: {result.Refund:N2} ج.م\nالمخصوم من دين العميل: {result.DebtOffset:N2} ج.م\nالمردود نقدًا: {result.CashRefund:N2} ج.م",
+                "تم", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
         catch (Exception ex) { AppLog.Error("تعذر تسجيل مرتجع", ex); MessageBox.Show(this, ex.Message, "مرتجع", MessageBoxButtons.OK, MessageBoxIcon.Error); }
     }
