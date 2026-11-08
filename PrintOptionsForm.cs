@@ -403,8 +403,11 @@ namespace LibraryPrintApp
                 Orientation = Orientation.Vertical,
                 FixedPanel = FixedPanel.Panel1,
                 IsSplitterFixed = true,
-                Panel1MinSize = 150,
-                Panel2MinSize = 420,
+                // ابدأ بدون حدود دنيا ثابتة؛ WinForms ينشئ الـ SplitContainer قبل
+                // اكتمال Dock layout أحيانًا، ويكون عرضه المؤقت أصغر من مجموع الحدين.
+                // FitTemplateSplitter يضبط المسافة بأمان بعد ظهور النافذة.
+                Panel1MinSize = 0,
+                Panel2MinSize = 0,
                 RightToLeft = RightToLeft.Yes,
                 BackColor = Color.FromArgb(224, 228, 233)
             };
@@ -412,13 +415,27 @@ namespace LibraryPrintApp
             // ArgumentOutOfRangeException إذا لم تتسع النافذة لمجموع الحدين الأدنى.
             void FitTemplateSplitter()
             {
-                int available = mainSplit.ClientSize.Width - mainSplit.SplitterWidth;
-                int min = mainSplit.Panel1MinSize;
-                int max = available - mainSplit.Panel2MinSize;
-                if (max < min) return;
-                int target = Math.Clamp(178, min, max);
-                if (mainSplit.SplitterDistance != target)
-                    mainSplit.SplitterDistance = target;
+                if (mainSplit.IsDisposed || !mainSplit.IsHandleCreated) return;
+
+                // نستخدم الحدود الفعلية لعرض النافذة بعد اكتمال التخطيط.
+                // عند الشاشات الضيقة نصغّر اللوحة الجانبية بدل ضبط مسافة غير صالحة.
+                int width = mainSplit.ClientSize.Width;
+                int splitter = mainSplit.SplitterWidth;
+                int available = Math.Max(0, width - splitter);
+                int desiredPanel2 = 420;
+                int maxPanel1 = Math.Max(0, available - desiredPanel2);
+                int target = Math.Clamp(178, 0, maxPanel1);
+
+                try
+                {
+                    if (mainSplit.SplitterDistance != target)
+                        mainSplit.SplitterDistance = target;
+                }
+                catch (ArgumentOutOfRangeException)
+                {
+                    // قد يطلق WinForms حدث SizeChanged أثناء تغيير الحجم الوسيط.
+                    // سيعاد الحساب عند Shown/SizeChanged التالي.
+                }
             }
             mainSplit.SizeChanged += (_, _) => FitTemplateSplitter();
             mainSplit.Panel1.Controls.Add(templateSidebar);
