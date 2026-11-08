@@ -463,7 +463,6 @@ internal sealed class BusinessManagementForm : Form
         sections.TabPages.Add(purchasesPage);
         sections.SelectedIndexChanged += (_, _) => { if (sections.SelectedTab == purchasesPage) LoadPurchaseReturnArchiveGrid(); };
         page.Controls.Add(sections);
-        page.Load += (_, _) => LoadReturnRows();
         return page;
     }
 
