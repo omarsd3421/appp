@@ -218,52 +218,92 @@ internal sealed class BusinessManagementForm : Form
         {
             Text = "مرتجع مشتريات إلى المورد",
             StartPosition = FormStartPosition.CenterParent,
-            Size = new Size(1120, 700), MinimumSize = new Size(900, 580),
+            Size = new Size(1180, 780), MinimumSize = new Size(980, 660),
             RightToLeft = RightToLeft.Yes, RightToLeftLayout = true,
             Font = new Font("Segoe UI", 10F), BackColor = UiKit.Background
         };
         EnableEscapeClose(dialog);
-        var root = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 4, Padding = new Padding(12) };
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 64));
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 54));
+        var root = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 5, Padding = new Padding(12) };
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 88));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 68));
-        var top = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, WrapContents = false };
-        var supplier = new ComboBox { Width = 260, DropDownStyle = ComboBoxStyle.DropDownList, Font = new Font("Segoe UI", 10F) };
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 70));
+
+        var top = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, WrapContents = true, AutoScroll = false, Padding = new Padding(2) };
+        var supplier = new ComboBox { Width = 250, DropDownStyle = ComboBoxStyle.DropDownList, Font = new Font("Segoe UI", 10F) };
         foreach (var item in BusinessManagementStore.LoadSuppliers()) supplier.Items.Add(item);
-        if (supplier.Items.Count > 0) supplier.SelectedIndex = 0;
-        var invoice = new ComboBox { Width = 280, DropDownStyle = ComboBoxStyle.DropDownList, Font = new Font("Segoe UI", 10F) };
-        var reason = new TextBox { Width = 250, PlaceholderText = "سبب/ملاحظة المرتجع" };
-        top.Controls.Add(LabeledControl("المورد", supplier, 290));
-        top.Controls.Add(LabeledControl("الفاتورة", invoice, 310));
-        top.Controls.Add(LabeledControl("ملاحظات", reason, 270));
+        var invoice = new ComboBox { Width = 270, DropDownStyle = ComboBoxStyle.DropDownList, Font = new Font("Segoe UI", 10F) };
+        var reason = new TextBox { Width = 220, PlaceholderText = "سبب/ملاحظة المرتجع" };
+        top.Controls.Add(LabeledControl("المورد", supplier, 275));
+        top.Controls.Add(LabeledControl("الفاتورة", invoice, 295));
+        top.Controls.Add(LabeledControl("ملاحظات", reason, 245));
         root.Controls.Add(top, 0, 0);
-        var hint = MakeHint("اختر «كل فواتير المورد» لإرجاع المتبقي من عدة فواتير مرة واحدة، أو اختر فاتورة بعينها. الكميات المتاحة محسوبة بعد المرتجعات السابقة ومحدودة برصيد المخزون الحالي حتى لا نرجع كتبًا تم بيعها.");
-        root.Controls.Add(hint, 0, 1);
+
+        var tools = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, WrapContents = false, Padding = new Padding(2) };
+        var search = new TextBox { Width = 235, PlaceholderText = "بحث باسم الصنف أو رقم الفاتورة", Font = new Font("Segoe UI", 10F) };
+        var fillAll = UiKit.Button("تحديد كل المتاح", UiKit.Primary, 150, 38);
+        var clearAll = UiKit.Button("مسح الكميات", Color.FromArgb(108,117,125), 125, 38);
+        var fillCurrent = UiKit.Button("كمية السطر المحدد", Color.FromArgb(75,85,99), 165, 38);
+        tools.Controls.Add(search); tools.Controls.Add(fillAll); tools.Controls.Add(fillCurrent); tools.Controls.Add(clearAll);
+        root.Controls.Add(tools, 0, 1);
+
+        var hint = MakeHint("الأصناف المباعة بالكامل تظهر بالرمادي ولا تقبل الإرجاع. اختر «تحديد كل المتاح» للمرتجع الكبير، أو اكتب الكمية مباشرة. الاختصارات: Ctrl+A تحديد كل المتاح، Ctrl+Backspace مسح، F2 ملء السطر المحدد، Ctrl+Enter تأكيد.");
+        root.Controls.Add(hint, 0, 2);
+
         var grid = new DataGridView { Dock = DockStyle.Fill, AllowUserToAddRows = false, AllowUserToDeleteRows = false, MultiSelect = false, SelectionMode = DataGridViewSelectionMode.CellSelect, AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill };
         StyleBusinessGrid(grid);
         grid.ReadOnly = false;
         grid.Columns.Add(new DataGridViewTextBoxColumn { Name="PurchaseItemId", Visible=false, ReadOnly=true });
-        grid.Columns.Add(new DataGridViewTextBoxColumn { Name="PurchaseId", Visible=false });
-        grid.Columns.Add(UiKit.GridText("Invoice","فاتورة الشراء",120));
-        grid.Columns.Add(UiKit.GridText("Date","تاريخ الشراء",130));
-        grid.Columns.Add(UiKit.GridText("Product","الصنف",250));
-        grid.Columns.Add(UiKit.GridText("Purchased","المشتَرى",80));
-        grid.Columns.Add(UiKit.GridText("Available","المتاح للرد",90));
-        grid.Columns.Add(UiKit.GridText("Cost","تكلفة الوحدة",100));
+        grid.Columns.Add(new DataGridViewTextBoxColumn { Name="PurchaseId", Visible=false, ReadOnly=true });
+        grid.Columns.Add(UiKit.GridText("Invoice","فاتورة الشراء",100));
+        grid.Columns.Add(UiKit.GridText("Date","تاريخ الشراء",105));
+        grid.Columns.Add(UiKit.GridText("Product","الصنف",210));
+        grid.Columns.Add(UiKit.GridText("Purchased","المشتَرى",65));
+        grid.Columns.Add(UiKit.GridText("Returned","مرتجع سابقًا",75));
+        grid.Columns.Add(UiKit.GridText("Available","المتاح للرد",75));
+        grid.Columns.Add(UiKit.GridText("Status","حالة الصنف",145));
+        grid.Columns.Add(UiKit.GridText("Cost","تكلفة الوحدة",85));
         var qtyCol = new DataGridViewTextBoxColumn { Name="ReturnQty", HeaderText="كمية المرتجع", FillWeight=90, ReadOnly=false };
         grid.Columns.Add(qtyCol);
         foreach (DataGridViewColumn column in grid.Columns) column.ReadOnly = true;
         qtyCol.ReadOnly = false;
-        root.Controls.Add(grid, 0, 2);
+        root.Controls.Add(grid, 0, 3);
+
         var footer = new FlowLayoutPanel { Dock=DockStyle.Fill, FlowDirection=FlowDirection.RightToLeft, WrapContents=false, Padding=new Padding(3) };
         var totalLabel = new Label { AutoSize=true, Text="إجمالي المرتجع: 0.00 ج.م", Font=new Font("Segoe UI",11F,FontStyle.Bold), ForeColor=UiKit.Text, Padding=new Padding(8,10,8,0) };
-        var refresh = UiKit.Button("تحديث الأصناف", UiKit.Primary, 130, 40);
-        var save = UiKit.Button("تأكيد مرتجع المورد", UiKit.Danger, 190, 42);
-        var close = UiKit.Button("إغلاق", Color.FromArgb(108,117,125), 100, 40);
+        var refresh = UiKit.Button("تحديث الأصناف", UiKit.Primary, 125, 40);
+        var save = UiKit.Button("تأكيد مرتجع المورد", UiKit.Danger, 180, 42);
+        var close = UiKit.Button("إغلاق", Color.FromArgb(108,117,125), 95, 40);
         footer.Controls.Add(totalLabel); footer.Controls.Add(refresh); footer.Controls.Add(save); footer.Controls.Add(close);
-        root.Controls.Add(footer,0,3);
+        root.Controls.Add(footer,0,4);
         dialog.Controls.Add(root);
+
+        void Recalc()
+        {
+            decimal total=0m; int selectedQty=0; int selectedLines=0;
+            foreach(DataGridViewRow row in grid.Rows)
+            {
+                if(row.IsNewRow) continue;
+                int qty=0; int.TryParse(Convert.ToString(row.Cells["ReturnQty"].Value),out qty);
+                decimal cost=0m; decimal.TryParse(Convert.ToString(row.Cells["Cost"].Value),NumberStyles.Any,CultureInfo.CurrentCulture,out cost);
+                if(qty>0){selectedQty+=qty;selectedLines++;total+=qty*cost;}
+            }
+            totalLabel.Text=$"الأصناف المحددة: {selectedLines} | الكميات: {selectedQty:N0} | إجمالي المرتجع: {total:N2} ج.م";
+        }
+        void ApplySearch()
+        {
+            string q=(search.Text??"").Trim();
+            foreach(DataGridViewRow row in grid.Rows)
+                row.Visible=string.IsNullOrWhiteSpace(q) ||
+                    Convert.ToString(row.Cells["Product"].Value)?.Contains(q,StringComparison.CurrentCultureIgnoreCase)==true ||
+                    Convert.ToString(row.Cells["Invoice"].Value)?.Contains(q,StringComparison.CurrentCultureIgnoreCase)==true;
+        }
+        void FillRow(DataGridViewRow row)
+        {
+            int available=Convert.ToInt32(row.Cells["Available"].Value,CultureInfo.InvariantCulture);
+            if(available>0) row.Cells["ReturnQty"].Value=available;
+        }
         void LoadInvoiceChoices()
         {
             invoice.Items.Clear();
@@ -275,30 +315,70 @@ internal sealed class BusinessManagementForm : Form
         }
         void LoadRows()
         {
-            grid.Rows.Clear(); totalLabel.Text="إجمالي المرتجع: 0.00 ج.م";
-            if(supplier.SelectedItem is not SupplierLookupRow selected) return;
+            grid.Rows.Clear();
+            if(supplier.SelectedItem is not SupplierLookupRow selected){Recalc();return;}
             long? purchaseId=(invoice.SelectedItem as PurchaseInvoiceChoice)?.PurchaseId;
             foreach(var item in BusinessManagementStore.LoadReturnablePurchaseItems(selected.Id,purchaseId))
-                grid.Rows.Add(item.PurchaseItemId,item.PurchaseId,
+            {
+                string status = item.AvailableQuantity>0 ? "متاح للرد"
+                    : item.UnreturnedQuantity<=0 ? "تم رد الكمية بالكامل"
+                    : "تم بيع الكمية بالكامل";
+                int index=grid.Rows.Add(item.PurchaseItemId,item.PurchaseId,
                     string.IsNullOrWhiteSpace(item.InvoiceNumber)?"#"+item.PurchaseId:item.InvoiceNumber,
                     item.PurchaseDate.ToString("yyyy-MM-dd"),item.ProductName,item.PurchasedQuantity,
-                    item.AvailableQuantity,item.UnitCost.ToString("N2"),0);
-        }
-        void Recalc()
-        {
-            decimal total=0m;
-            foreach(DataGridViewRow row in grid.Rows)
-            {
-                int qty=0; int.TryParse(Convert.ToString(row.Cells["ReturnQty"].Value),out qty);
-                decimal cost=0m; decimal.TryParse(Convert.ToString(row.Cells["Cost"].Value),NumberStyles.Any,CultureInfo.CurrentCulture,out cost);
-                total+=Math.Max(0,qty)*cost;
+                    item.ReturnedQuantity,item.AvailableQuantity,status,item.UnitCost.ToString("N2"),0);
+                var row=grid.Rows[index];
+                if(item.AvailableQuantity<=0)
+                {
+                    row.DefaultCellStyle.BackColor=Color.FromArgb(225,228,232);
+                    row.DefaultCellStyle.ForeColor=Color.FromArgb(105,112,120);
+                    row.Cells["ReturnQty"].ReadOnly=true;
+                    row.Cells["ReturnQty"].Value=0;
+                }
+                else
+                {
+                    row.Cells["ReturnQty"].ReadOnly=false;
+                    row.Cells["ReturnQty"].Style.BackColor=Color.FromArgb(240,248,255);
+                }
             }
-            totalLabel.Text=$"إجمالي المرتجع: {total:N2} ج.م";
+            ApplySearch(); Recalc();
         }
+        void FillAllAvailable()
+        {
+            foreach(DataGridViewRow row in grid.Rows) FillRow(row);
+            Recalc();
+        }
+        void ClearQuantities()
+        {
+            foreach(DataGridViewRow row in grid.Rows)
+                if(!row.Cells["ReturnQty"].ReadOnly) row.Cells["ReturnQty"].Value=0;
+            Recalc();
+        }
+        void FillCurrentRow()
+        {
+            if(grid.CurrentRow!=null) FillRow(grid.CurrentRow);
+            Recalc();
+        }
+
         supplier.SelectedIndexChanged += (_,_)=>{LoadInvoiceChoices();LoadRows();};
         invoice.SelectedIndexChanged += (_,_)=>LoadRows();
+        search.TextChanged += (_,_)=>ApplySearch();
         grid.CellValueChanged += (_,_)=>Recalc();
         grid.CurrentCellDirtyStateChanged += (_,_)=>{if(grid.IsCurrentCellDirty)grid.CommitEdit(DataGridViewDataErrorContexts.Commit);};
+        grid.CellValidating += (_,e)=>{
+            if(e.ColumnIndex<0 || grid.Columns[e.ColumnIndex].Name!="ReturnQty")return;
+            int qty=0; int.TryParse(Convert.ToString(grid.Rows[e.RowIndex].Cells[e.ColumnIndex].EditedFormattedValue),out qty);
+            int available=Convert.ToInt32(grid.Rows[e.RowIndex].Cells["Available"].Value,CultureInfo.InvariantCulture);
+            if(qty<0 || qty>available){e.Cancel=true;MessageBox.Show(dialog,$"الكمية يجب أن تكون من صفر إلى {available}.","كمية المرتجع",MessageBoxButtons.OK,MessageBoxIcon.Information);}
+        };
+        grid.KeyDown += (_,e)=>{
+            if(e.Control && e.KeyCode==Keys.A){e.Handled=true;FillAllAvailable();}
+            else if(e.Control && e.KeyCode==Keys.Back){e.Handled=true;ClearQuantities();}
+            else if(e.KeyCode==Keys.F2){e.Handled=true;FillCurrentRow();}
+        };
+        fillAll.Click += (_,_)=>FillAllAvailable();
+        clearAll.Click += (_,_)=>ClearQuantities();
+        fillCurrent.Click += (_,_)=>FillCurrentRow();
         refresh.Click += (_,_)=>LoadRows();
         close.Click += (_,_)=>dialog.Close();
         save.Click += (_,_) =>
@@ -317,15 +397,19 @@ internal sealed class BusinessManagementForm : Form
                     lines.Add(new PurchaseReturnLineInput { PurchaseItemId=Convert.ToInt64(row.Cells["PurchaseItemId"].Value,CultureInfo.InvariantCulture), Quantity=qty });
                 }
                 if(lines.Count==0) throw new InvalidOperationException("اكتب كمية مرتجع لصنف واحد على الأقل.");
-                var confirm=MessageBox.Show(dialog,"سيتم خصم الكميات من المخزون وتسوية قيمة المرتجع مع رصيد المورد، وأي فائض مستحق من المورد سيُسجل كإيراد نقدي. هل تريد المتابعة؟","تأكيد مرتجع المشتريات",MessageBoxButtons.YesNo,MessageBoxIcon.Warning);
+                var confirm=MessageBox.Show(dialog,"سيتم خصم الكميات من المخزون. ستُخصم قيمة المرتجع من مديونية المورد أولًا، وأي فائض سيُحفظ رصيدًا دائنًا لك عند المورد لا يدخل الخزنة. هل تريد المتابعة؟","تأكيد مرتجع المشتريات",MessageBoxButtons.YesNo,MessageBoxIcon.Warning);
                 if(confirm!=DialogResult.Yes)return;
                 var result=BusinessManagementStore.RecordPurchaseReturn(currentUser,selected.Id,lines,reason.Text);
                 LoadSuppliers(); LoadPurchaseArchive(); LoadStockHistory();
-                MessageBox.Show(dialog,$"تم تسجيل مرتجع المورد رقم {result.ReturnId}.\nإجمالي المرتجع: {result.Total:N2} ج.م\nالمخصوم من حساب المورد: {result.SupplierCredit:N2} ج.م\nالمستلم نقدًا من المورد: {result.CashRefund:N2} ج.م","تم",MessageBoxButtons.OK,MessageBoxIcon.Information);
+                MessageBox.Show(dialog,$"تم تسجيل مرتجع المورد رقم {result.ReturnId}.\nإجمالي المرتجع: {result.Total:N2} ج.م\nالقيمة المسواة في حساب المورد: {result.SupplierCredit:N2} ج.م\nالمبلغ الداخل للخزنة: {result.CashRefund:N2} ج.م","تم",MessageBoxButtons.OK,MessageBoxIcon.Information);
                 dialog.Close();
             }
             catch(Exception ex){AppLog.Error("تعذر تسجيل مرتجع مشتريات للمورد",ex);MessageBox.Show(dialog,ex.Message,"مرتجع المورد",MessageBoxButtons.OK,MessageBoxIcon.Error);}
         };
+        dialog.KeyDown += (_,e)=>{
+            if(e.Control && e.KeyCode==Keys.Enter){e.Handled=true;e.SuppressKeyPress=true;save.PerformClick();}
+        };
+        if(supplier.Items.Count>0)supplier.SelectedIndex=0;
         LoadInvoiceChoices(); LoadRows();
         dialog.ShowDialog(this);
     }
