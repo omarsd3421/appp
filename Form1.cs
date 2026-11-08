@@ -2313,15 +2313,8 @@ namespace LibraryPrintApp
 
             PrintOptions selectedOptions = optionsForm.Options.Clone();
             selectedOptions.ClampToPageCount(pageCount);
-            try
-            {
-                AppOptions.SaveDefaultPrintOptions(selectedOptions);
-            }
-            catch (Exception ex)
-            {
-                // فشل حفظ الافتراضي لا يمنع تطبيق الإعدادات المختارة على الملف الحالي.
-                AppLog.Error("تعذر حفظ آخر إعدادات الطباعة كافتراضي", ex);
-            }
+            // إعدادات النافذة تطبق على الملفات المحددة فقط؛ لا نكتبها كإعداد افتراضي دائم.
+            // إعادة التعيين بعد إتمام طباعة الكل تظل مسؤولة عن تجهيز العملية التالية بالقيم الافتراضية.
 
             foreach (DataGridViewRow selectedRow in rows)
             {
