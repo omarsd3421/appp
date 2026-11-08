@@ -219,7 +219,7 @@ internal sealed class BusinessManagementForm : Form
         var find = UiKit.Button("🔎 تحديث النتائج", UiKit.Primary, 140, 40); find.Click += (_, _) => LoadReturnRows();
         var diagnose = UiKit.Button("🩺 تشخيص المرتجعات", Color.FromArgb(75, 85, 99), 155, 40); diagnose.Click += (_, _) => RunReturnDiagnostics();
         bar.Controls.Add(returnSearch); bar.Controls.Add(find); bar.Controls.Add(diagnose);
-        bar.Controls.Add(MakeHint("تظهر المبيعات النقدية أو المسددة بالكامل؛ المبيعات الآجلة ذات الدين القائم لا تظهر كقابلة للرد."));
+        bar.Controls.Add(MakeHint("البيع الآجل لا يظهر قبل تسوية دين العميل؛ يشترط شفت مفتوح لرد المبلغ."));
         root.Controls.Add(bar, 0, 0);
         StyleBusinessGrid(returnGrid);
         returnGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Id", Visible = false });
@@ -561,7 +561,8 @@ FROM Purchases WHERE SupplierId=$s ORDER BY CreatedAt DESC,Id DESC LIMIT 300";
             long supplierId = Convert.ToInt64(supplierGrid.CurrentRow.Cells["Id"].Value, CultureInfo.InvariantCulture);
             foreach (var payment in BusinessManagementStore.LoadSupplierPaymentHistory(supplierId))
                 supplierPaymentGrid.Rows.Add(payment.Id, payment.PurchaseId,
-                    payment.CreatedAt.ToString("yyyy-MM-dd HH:mm"), payment.InvoiceNumber,
+                    payment.CreatedAt.ToString("yyyy-MM-dd HH:mm"),
+                    string.IsNullOrWhiteSpace(payment.InvoiceNumber) ? "#" + payment.PurchaseId.ToString(CultureInfo.InvariantCulture) : payment.InvoiceNumber,
                     payment.Amount.ToString("N2"), payment.Note, payment.UserName);
         }
         catch (Exception ex) { AppLog.Error("تعذر تحميل دفعات المورد", ex); }
@@ -898,7 +899,9 @@ WHERE ds.BusinessDate=$date AND ds.Status='OPEN' AND sh.Status='OPEN' AND sh.Use
             long returnDocuments = returnsTable ? Scalar("SELECT COUNT(*) FROM SalesReturns") : 0;
             long returnItems = itemsTable ? Scalar("SELECT COUNT(*) FROM SalesReturnItems") : 0;
             long returnedUnits = itemsTable ? Scalar("SELECT COALESCE(SUM(Quantity),0) FROM SalesReturnItems") : 0;
-            long availableLines = BusinessManagementStore.LoadReturnableSales("").Count;
+            long availableLines = returnsTable && itemsTable
+                ? BusinessManagementStore.LoadReturnableSales("").Count
+                : 0;
             long overReturnedLines = itemsTable
                 ? Scalar(@"SELECT COUNT(*) FROM (
 SELECT ri.OriginalTransactionId
