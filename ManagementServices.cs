@@ -990,21 +990,38 @@ ORDER BY p.CreatedAt,p.Id,pi.Id";
             }
         }
 
-        // FIFO: تُستهلك الكميات المباعة من أقدم دفعات الشراء أولًا؛ فيبقى أحدث لوط متاحًا للرد.
+        // FIFO is allocated across ALL suppliers' purchase lots for this product,
+        // not just the currently selected supplier, so sold stock is not attributed
+        // to the wrong invoice when the same product was bought from multiple suppliers.
         foreach (var group in rows.GroupBy(x => x.ProductId))
         {
             using var stockQuery = c.CreateCommand();
             stockQuery.CommandText = "SELECT Quantity FROM Products WHERE Id=$id";
             stockQuery.Parameters.AddWithValue("$id", group.Key);
             int stock = Math.Max(0,Convert.ToInt32(stockQuery.ExecuteScalar() ?? 0,CultureInfo.InvariantCulture));
-            int unreturnedTotal = group.Sum(x => x.UnreturnedQuantity);
-            int soldToAllocate = Math.Max(0,unreturnedTotal-stock);
-            foreach (var row in group.OrderBy(x=>x.PurchaseDate).ThenBy(x=>x.PurchaseId).ThenBy(x=>x.PurchaseItemId))
+
+            var lots = new List<(long PurchaseItemId,int Remaining)>();
+            using (var lotsQuery = c.CreateCommand())
             {
-                int soldFromThisLot = Math.Min(row.UnreturnedQuantity,soldToAllocate);
-                soldToAllocate -= soldFromThisLot;
-                row.AvailableQuantity = Math.Max(0,row.UnreturnedQuantity-soldFromThisLot);
+                lotsQuery.CommandText = @"SELECT pi.Id,MAX(0,pi.Quantity-COALESCE((SELECT SUM(ri.Quantity) FROM PurchaseReturnItems ri WHERE ri.PurchaseItemId=pi.Id),0))
+FROM PurchaseItems pi JOIN Purchases p ON p.Id=pi.PurchaseId
+WHERE pi.ProductId=$product
+ORDER BY p.CreatedAt,p.Id,pi.Id";
+                lotsQuery.Parameters.AddWithValue("$product",group.Key);
+                using var lr=lotsQuery.ExecuteReader();
+                while(lr.Read()) lots.Add((lr.GetInt64(0),Convert.ToInt32(lr.GetValue(1),CultureInfo.InvariantCulture)));
             }
+
+            int soldToAllocate=Math.Max(0,lots.Sum(x=>x.Remaining)-stock);
+            var availableByLot=new Dictionary<long,int>();
+            foreach(var lot in lots)
+            {
+                int soldFromLot=Math.Min(lot.Remaining,soldToAllocate);
+                soldToAllocate-=soldFromLot;
+                availableByLot[lot.PurchaseItemId]=Math.Max(0,lot.Remaining-soldFromLot);
+            }
+            foreach(var row in group)
+                row.AvailableQuantity=availableByLot.TryGetValue(row.PurchaseItemId,out int available)?available:0;
         }
         return rows;
     }
