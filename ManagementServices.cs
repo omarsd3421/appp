@@ -837,7 +837,6 @@ VALUES($s,$no,$t,$paid,$remain,$notes,$u,$d); SELECT last_insert_rowid();";
         insert.Parameters.AddWithValue("$s", supplierId);
         insert.Parameters.AddWithValue("$no", DbText(invoiceNumber));
         insert.Parameters.AddWithValue("$t", total);
-        insert.Parameters.AddWithValue("$paid", paidAmount);
         // Apply any credit balance previously created by supplier returns before creating new debt.
         decimal supplierCredit = 0m;
         using (var credits = c.CreateCommand())
@@ -863,11 +862,26 @@ VALUES($s,$no,$t,$paid,$remain,$notes,$u,$d); SELECT last_insert_rowid();";
                 creditToApply -= applied;
             }
         }
+        insert.Parameters.AddWithValue("$paid", paidAmount + supplierCredit);
         insert.Parameters.AddWithValue("$remain", Math.Max(0m, total - paidAmount - supplierCredit));
         insert.Parameters.AddWithValue("$notes", DbText(notes));
         insert.Parameters.AddWithValue("$u", userId);
         insert.Parameters.AddWithValue("$d", DateTime.Now.ToString("O", CultureInfo.InvariantCulture));
         long purchaseId = Convert.ToInt64(insert.ExecuteScalar(), CultureInfo.InvariantCulture);
+        if (supplierCredit > 0.005m)
+        {
+            using var creditPayment = c.CreateCommand();
+            creditPayment.Transaction = tx;
+            creditPayment.CommandText = @"INSERT INTO SupplierPayments(SupplierId,PurchaseId,UserId,Amount,Note,CreatedAt)
+VALUES($s,$p,$u,$a,$n,$d)";
+            creditPayment.Parameters.AddWithValue("$s", supplierId);
+            creditPayment.Parameters.AddWithValue("$p", purchaseId);
+            creditPayment.Parameters.AddWithValue("$u", userId);
+            creditPayment.Parameters.AddWithValue("$a", supplierCredit);
+            creditPayment.Parameters.AddWithValue("$n", "تسوية من رصيد دائن سابق ناتج عن مرتجع مشتريات (بدون حركة خزنة)");
+            creditPayment.Parameters.AddWithValue("$d", DateTime.Now.ToString("O", CultureInfo.InvariantCulture));
+            creditPayment.ExecuteNonQuery();
+        }
 
         foreach (var line in lines)
         {
@@ -995,7 +1009,7 @@ ORDER BY p.CreatedAt,p.Id,pi.Id";
         return rows;
     }
 
-    public static (long ReturnId, decimal Total, decimal SupplierCredit, decimal CashRefund) RecordPurchaseReturn(
+    public static (long ReturnId, decimal Total, decimal SupplierCredit, decimal CashRefund, decimal SupplierCreditBalance) RecordPurchaseReturn(
         string userName, long supplierId, IReadOnlyList<PurchaseReturnLineInput> lines, string? reason)
     {
         if(lines==null || lines.Count==0) throw new InvalidOperationException("حدد صنفًا واحدًا على الأقل لإرجاعه.");
@@ -1093,7 +1107,7 @@ VALUES($s,$r,$a,$a,$d,$n)";
             AppDatabase.AddAuditLog(c,tx,userName,"مرتجع شراء","مرتجع مورد",returnId,
                 $"المورد: {supplierId} | القيمة: {total:F2} | خصم مديونية قائمة: {total-supplierCreditBalance:F2} | رصيد دائن مرحل: {supplierCreditBalance:F2} | لا يوجد رد نقدي للخزنة");
             tx.Commit();
-            return (returnId,total,total,0m);
+            return (returnId,total,total-supplierCreditBalance,0m,supplierCreditBalance);
         }
     }
 
